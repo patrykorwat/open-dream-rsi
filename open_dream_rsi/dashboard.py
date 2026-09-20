@@ -90,11 +90,11 @@ class MockLLM:
         prompt = messages[-1]["content"]
         category = prompt.split("[")[1].split("]")[0] if "[" in prompt else "?"
         buggy, fixed = SOLUTIONS.get(category, (None, None))
-        if fixed and fixed.strip() in prompt:          # recipe warm start: reuse best
+        if fixed and fixed.strip() in prompt:              # recipe warm start: reuse best
             code = fixed
-        elif "failure feedback:\n(none)" in prompt:    # first ever attempt: ship a bug
-            code = buggy
-        else:                                          # verifier complained: fix it
+        elif "(none yet)" in prompt and "failure feedback:\n(none)" in prompt:
+            code = buggy                                    # never seen this task: ship a bug
+        else:                                               # recipe or verifier feedback
             code = fixed
         return f"```python\n{code}```"
 
@@ -190,7 +190,7 @@ class DashboardState:
 # ---------------------------------------------------------------------------
 
 
-def run_dashboard(host: str = "127.0.0.1", port: int = 8765, provider: str = "mock",
+def run_dashboard(host: str = "0.0.0.0", port: int = 8765, provider: str = "mock",
                   model: Optional[str] = None, tasks_file: Optional[str] = None,
                   interval: float = 1.0, budget: int = 40, memory_root: str = ".dream_rsi_dashboard",
                   block: bool = True) -> None:

@@ -89,7 +89,8 @@ def main(argv: list[str] | None = None) -> int:
     status.set_defaults(func=cmd_status)
 
     dash = sub.add_parser("dashboard", help="serve the live web dashboard")
-    dash.add_argument("--host", default="127.0.0.1")
+    dash.add_argument("--host", default="0.0.0.0",
+                      help="bind address (default 0.0.0.0 — reachable on the LAN)")
     dash.add_argument("--port", type=int, default=8765)
     dash.add_argument("--provider", default="mock", choices=["mock", "openai", "cursor", "local"])
     dash.add_argument("--model", default=None)
@@ -98,8 +99,33 @@ def main(argv: list[str] | None = None) -> int:
     dash.add_argument("--budget", type=int, default=40)
     dash.set_defaults(func=cmd_dashboard)
 
+    bench = sub.add_parser("bench", help="benchmark dreaming loop vs cold baseline")
+    bench.add_argument("--cycles", type=int, default=10)
+    bench.add_argument("--provider", default="mock", choices=["mock", "openai", "cursor", "local"])
+    bench.add_argument("--model", default=None)
+    bench.add_argument("--dream-iters", type=int, default=60)
+    bench.add_argument("--tasks", default=None, help="JSON task file (default: built-in demo set)")
+    bench.add_argument("--markdown", action="store_true", help="print markdown table")
+    bench.set_defaults(func=cmd_bench)
+
     args = parser.parse_args(argv)
     return args.func(args)
+
+
+def cmd_bench(args: argparse.Namespace) -> int:
+    from open_dream_rsi.bench import run_benchmark, to_markdown
+
+    tasks = None
+    if args.tasks:
+        raw = json.loads(Path(args.tasks).read_text(encoding="utf-8"))
+        tasks = [Task(**t) for t in raw]
+    summary = run_benchmark(cycles=args.cycles, provider=args.provider,
+                            model=args.model, dream_iterations=args.dream_iters,
+                            tasks=tasks)
+    print(json.dumps(summary, indent=2))
+    if args.markdown:
+        print(to_markdown(summary))
+    return 0
 
 
 def cmd_dashboard(args: argparse.Namespace) -> int:

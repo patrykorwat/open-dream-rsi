@@ -169,7 +169,9 @@ class AutoRSIRuntime:
 
         feedback = ""
         best_node = max(tree.nodes.values(), key=lambda n: n.score) if tree.nodes else None
-        if best_node and not best_node.children:
+        # A bare seed node is not a failed attempt — only show feedback when an
+        # actual candidate is the current best and still failing.
+        if best_node and not best_node.children and best_node.action != "warm_start":
             feedback = "current best still failing/unfinished"
 
         solved = False
