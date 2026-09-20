@@ -48,6 +48,7 @@ class LoopTest(unittest.TestCase):
         self.runtime = AutoRSIRuntime(
             client=self.llm, memory=self.memory, tasks=[make_task()],
             api_call_budget=10, dream_iterations=20,
+            enable_policy_code=False,  # policy generation has its own test module
         )
 
     @staticmethod

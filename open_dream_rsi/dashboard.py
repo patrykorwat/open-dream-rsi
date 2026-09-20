@@ -87,6 +87,14 @@ class MockLLM:
     def chat(self, messages, model=None, temperature=0.7, max_tokens=1024):
         self.calls += 1
         time.sleep(self.latency)
+        system = messages[0]["content"] if messages else ""
+        if "exploration policy" in system:            # policy-generation call
+            return ("```python\ndef choose_action(frontier, step):\n"
+                    "    if not frontier:\n        return None\n"
+                    "    ranked = sorted(frontier, key=lambda n: n['score'], reverse=True)\n"
+                    "    if step % 4 == 3 and len(ranked) > 1:\n"
+                    "        return ranked[-1]['node_id']\n"
+                    "    return ranked[0]['node_id']\n```")
         prompt = messages[-1]["content"]
         category = prompt.split("[")[1].split("]")[0] if "[" in prompt else "?"
         buggy, fixed = SOLUTIONS.get(category, (None, None))
@@ -166,6 +174,9 @@ class DashboardState:
             recipes = {}
             for cat, entry in getattr(memory, "_recipes", {}).items():
                 recipes[cat] = {"code": entry["code"], "score": entry.get("score")}
+            policy_codes = {}
+            for cat, entry in getattr(memory, "_policy_codes", {}).items():
+                policy_codes[cat] = {"code": entry["code"], "score": entry.get("score")}
             policies = {cat: hist[-1] for cat, hist in self.policy_history.items() if hist}
             return {
                 "cycles": self.cycles,
@@ -181,6 +192,7 @@ class DashboardState:
                 "events": self.events[-120:],
                 "policies": policies,
                 "policy_history": self.policy_history,
+                "policy_codes": policy_codes,
                 "recipes": recipes,
             }
 
@@ -328,6 +340,7 @@ border-radius:0 8px 8px 0;font-size:13px;animation:in .3s ease}
 .ev .t{color:var(--mut);font-size:11px;margin-right:8px;font-variant-numeric:tabular-nums}
 .ev.llm_call{border-color:var(--acc)}.ev.verification{border-color:var(--ok)}
 .ev.verification.bad{border-color:var(--bad)}.ev.dreaming,.ev.dream_done{border-color:var(--dream)}
+.ev.policy_gen,.ev.policy_promoted{border-color:var(--dream)}.ev.policy_rejected{border-color:var(--bad)}
 .ev.cycle_done{border-color:#2a3955;color:var(--mut)}
 .ev.task_done{border-color:var(--acc2)}
 .task{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px}
@@ -384,6 +397,7 @@ details summary{cursor:pointer;color:var(--acc);font-size:12px}
   <div>
     <div class="panel"><h2>Task board — online attempts</h2><div id="tasks"></div></div>
     <div class="panel"><h2>Dreamed policies (offline learning)</h2><div id="policies"></div></div>
+    <div class="panel"><h2>Evolved policy code (LLM-written, replay-gated)</h2><div id="policycodes"></div></div>
     <div class="panel"><h2>Recipe library — learned solutions</h2><div id="recipes"></div>
       <div class="foot">open-dream-rsi · stdlib only · policies &amp; recipes persist across restarts</div></div>
   </div>
@@ -393,7 +407,7 @@ details summary{cursor:pointer;color:var(--acc);font-size:12px}
 const $=s=>document.querySelector(s);
 const fmt=t=>new Date(t*1000).toLocaleTimeString();
 const ICONS={llm_call:"📡",verification:"🧪",dreaming:"🌙",dream_done:"✨",task_done:"🎯",
-cycle_start:"▶",cycle_done:"🔄",runtime_error:"💥"};
+cycle_start:"▶",cycle_done:"🔄",runtime_error:"💥",policy_gen:"🧬",policy_promoted:"🧬",policy_rejected:"🚫"};
 async function act(a){await fetch('/api/'+a,{method:'POST'});refresh();}
 function evLine(e){
   const d=document.createElement('div');
@@ -404,6 +418,9 @@ function evLine(e){
   else if(e.kind==='dreaming')txt=`${e.task_id}: dreaming on ${e.nodes} nodes ×${e.iterations}`;
   else if(e.kind==='dream_done')txt=`${e.task_id}: policy → T=${(+e.policy.temperature).toFixed(2)}, depth=${(+e.policy.exploration_depth).toFixed(2)}`;
   else if(e.kind==='task_done')txt=`${e.task_id} ${e.solved?'SOLVED 🏆':'unsolved'} (${e.nodes} nodes)`;
+  else if(e.kind==='policy_gen')txt=`${e.task_id}: asking LLM for a new exploration policy (incumbent ${(+e.incumbent_score).toFixed(3)})`;
+  else if(e.kind==='policy_promoted')txt=`${e.task_id}: 🧬 new policy promoted (replay ${(+e.score).toFixed(3)})`;
+  else if(e.kind==='policy_rejected')txt=`${e.task_id}: policy rejected — ${String(e.reason||'').slice(0,90)}`;
   else if(e.kind==='cycle_done')txt=`cycle done — ${e.tasks_solved}/${e.tasks_attempted} solved, ${e.api_calls} calls`;
   else if(e.kind==='cycle_start')txt='cycle start: '+(e.tasks||[]).join(', ');
   else if(e.kind==='runtime_error')txt=e.error;
@@ -442,6 +459,11 @@ async function refresh(){
       <span>temp<div class="pbar temp"><i style="width:${Math.min(100,p.temperature/1.2*100)}%"></i></div></span><span class="val">${(+p.temperature).toFixed(2)}</span>
       <span>depth<div class="pbar dep"><i style="width:${Math.min(100,p.exploration_depth/6*100)}%"></i></div></span><span class="val">${(+p.exploration_depth).toFixed(2)}</span></div>`;
   }).join(''):'<span style="color:var(--mut)">no dreams yet…</span>';
+  const pc=Object.entries(s.policy_codes||{});
+  $('#policycodes').innerHTML=pc.length?pc.map(([c,e])=>
+    `<div style="margin-bottom:8px"><b style="font-size:12px;color:var(--dream)">🧬 ${c}</b>
+     <span style="color:var(--mut);font-size:11px">replay score ${(+e.score).toFixed(3)}</span><pre>${esc(e.code)}</pre></div>`).join('')
+    :'<span style="color:var(--mut)">no promoted policy code yet — the loop promotes only replay-beating candidates</span>';
   const r=Object.entries(s.recipes||{});
   $('#recipes').innerHTML=r.length?r.map(([c,e])=>
     `<div style="margin-bottom:8px"><b style="font-size:12px;color:var(--ok)">✓ ${c}</b>

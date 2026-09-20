@@ -38,6 +38,7 @@ def cmd_loop(args: argparse.Namespace) -> int:
         dream_iterations=args.dream_iters,
         interval_seconds=args.interval,
         max_tokens=args.max_tokens,
+        enable_policy_code=not args.no_policy_code,
     )
     if args.once:
         report = runtime.run_once()
@@ -83,6 +84,8 @@ def main(argv: list[str] | None = None) -> int:
     loop.add_argument("--max-tokens", type=int, default=2048,
                       help="completion budget per LLM call (raise for reasoning models)")
     loop.add_argument("--dream-iters", type=int, default=60)
+    loop.add_argument("--no-policy-code", action="store_true",
+                      help="disable LLM-written exploration policies (section-3 step)")
     loop.add_argument("--interval", type=float, default=300.0, help="seconds between cycles")
     loop.add_argument("--cycles", type=int, default=None, help="stop after N cycles")
     loop.add_argument("--once", action="store_true", help="single cycle (for cron)")
