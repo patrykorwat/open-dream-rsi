@@ -91,12 +91,60 @@ Full runnable example (online LLM loop + offline dreaming): `examples/optimize_k
 
 ---
 
+## 🤖 Autonomous RSI loop (Hermes-style supervisor)
+
+The runtime runs the improvement cycle **by itself**, with no human in the loop:
+
+```
+wake -> pick tasks -> online attempt (LLM + sandbox) -> offline dream
+     -> persist policy / recipe / tree -> sleep -> wake ...
+```
+
+```bash
+export OPENAI_API_KEY=...                     # or CURSOR_API_KEY + --provider cursor
+python -m open_dream_rsi loop --tasks tasks.json --interval 300   # daemon
+python -m open_dream_rsi loop --tasks tasks.json --once           # single cycle (cron)
+python -m open_dream_rsi status                                    # learned policies + recipes
+```
+
+`tasks.json`:
+
+```json
+[{
+  "task_id": "add1",
+  "category": "math",
+  "prompt": "Implement add(a, b) returning the sum.",
+  "tests": [{"call": "add(2, 3)", "expected": 5}],
+  "max_attempts": 3
+}]
+```
+
+What makes it self-improving between runs (persistent `--memory` dir):
+
+* **Dreamed policies** (`policies.json`) — the next cycle of a category starts
+  with the policy parameters learned by the last one.
+* **Recipe library** (`recipes.json`) — best verified solutions per category,
+  replayed as warm starts, so re-solving is nearly free.
+* **Archived discovery trees** (`trees/`) — offline dreaming always has history.
+* **Event log** (`events.jsonl`) — append-only audit of every decision.
+
+Guards: `--budget` caps API calls per cycle (dreaming stays free), candidate
+code runs in an isolated subprocess (`python -I`, scrubbed env, timeout) so a
+misbehaving solution cannot reach your API keys. Live walkthrough with a mock
+OpenAI server: `examples/live_loop_demo.py`.
+
+---
+
 ## 🧩 Module architecture
 
 * `open_dream_rsi.core.tree`: Stores the agent's hypothesis, result and action history.
 * `open_dream_rsi.core.simulator`: Simulates state transitions without invoking the external environment.
 * `open_dream_rsi.core.dreamer`: Offline optimization loop over generated simulations.
 * `open_dream_rsi.core.agent`: LLM agent abstraction driven by the rewarded policy.
+* `open_dream_rsi.loop`: `AutoRSIRuntime` — autonomous supervisor (schedule, budget, feedback loop).
+* `open_dream_rsi.memory`: `DreamMemory` — persistent policies, recipes, trees, event log.
+* `open_dream_rsi.tools`: `CodeVerifier` — sandboxed execution of candidate solutions.
+* `open_dream_rsi.cli`: `python -m open_dream_rsi loop|status` entry point.
 * `open_dream_rsi.llm`: OpenAI-compatible client (OpenAI, Cursor Models API, local servers).
 * `open_dream_rsi.utils.evaluator`: Scoring and ranking of policies over the recorded history.
 
