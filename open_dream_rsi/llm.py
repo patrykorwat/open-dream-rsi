@@ -59,6 +59,9 @@ class LLMConfig:
 
         The API key is read from the environment variable named by the profile
         (or overridden in ``overrides``). It is never stored in code.
+
+        Precedence: explicit ``overrides`` > environment variables
+        (``OPENAI_BASE_URL``, ``ODR_LLM_MODEL``) > preset defaults.
         """
         if preset not in ENDPOINT_PRESETS:
             raise ValueError(
@@ -66,9 +69,13 @@ class LLMConfig:
             )
         p = ENDPOINT_PRESETS[preset]
         api_key_env = overrides.pop("api_key_env", p["api_key_env"])
+        base_url = overrides.pop(
+            "base_url", os.environ.get("OPENAI_BASE_URL") or p["base_url"]
+        )
+        model = overrides.pop("model", os.environ.get("ODR_LLM_MODEL") or p["default_model"])
         cfg = cls(
-            base_url=overrides.pop("base_url", p["base_url"]),
-            model=overrides.pop("model", p["default_model"]),
+            base_url=base_url,
+            model=model,
             api_key_env=api_key_env,
             **overrides,
         )
@@ -181,7 +188,8 @@ class StubClient:
         self.response = response
         self.calls: List[List[Dict[str, str]]] = []
 
-    def chat(self, messages: List[Dict[str, str]], **_: Any) -> str:
+    def chat(self, messages: List[Dict[str, str]], model: Optional[str] = None,
+             temperature: float = 0.7, max_tokens: int = 1024) -> str:
         self.calls.append(messages)
         return self.response
 

@@ -1,0 +1,11 @@
+[{
+  "task_id": "add1",
+  "category": "math",
+  "prompt": "Implement add(a, b) returning the sum of two numbers.",
+  "tests": [
+    {"call": "add(2, 3)", "expected": 5},
+    {"call": "add(-1, 1)", "expected": 0},
+    {"call": "add(0, 0)", "expected": 0}
+  ],
+  "max_attempts": 3
+}]

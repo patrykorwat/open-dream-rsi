@@ -1,4 +1,4 @@
-from typing import Callable, Dict, List, Optional, Protocol, Tuple, runtime_checkable
+from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
 from open_dream_rsi.core.tree import DiscoveryTree
 from open_dream_rsi.core.dreamer import DreamEngine
@@ -8,7 +8,8 @@ from open_dream_rsi.core.dreamer import DreamEngine
 class ChatClient(Protocol):
     """Minimal LLM client interface (implemented by OpenAICompatibleClient and StubClient)."""
 
-    def chat(self, messages: List[Dict[str, str]], **kwargs) -> str: ...
+    def chat(self, messages: List[Dict[str, str]], model: Optional[str] = None,
+             temperature: float = 0.7, max_tokens: int = 1024) -> str: ...
 
 
 class DreamAgent:
