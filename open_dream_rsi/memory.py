@@ -4,6 +4,9 @@ Everything the agent learns survives restarts:
 
 * ``policies.json``  — dreamed policy parameters per task category. The next
   run of the same category starts where the last one finished.
+* ``policy_codes.json`` — LLM-written exploration-policy programs per category
+  (paper section 3: the policy itself is code, rewritten between cycles and
+  promoted only when it beats the incumbent on replay).
 * ``recipes.json``   — distilled winning solutions per category, used as warm
   starts (the loop literally improves itself between runs).
 * ``trees/``         — archived Discovery Trees per task (offline-dream fodder).
@@ -27,6 +30,7 @@ class DreamMemory:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self._policies = self._load(self.root / "policies.json", {})
+        self._policy_codes = self._load(self.root / "policy_codes.json", {})
         self._recipes = self._load(self.root / "recipes.json", {})
 
     # -- low-level -------------------------------------------------------------
@@ -55,6 +59,23 @@ class DreamMemory:
     def save_policy(self, category: str, params: Dict[str, float]) -> None:
         self._policies[category] = {"params": dict(params), "updated_at": time.time()}
         self._save(self.root / "policies.json", self._policies)
+
+    # -- policy code (LLM-written exploration policies) -------------------------
+
+    def get_policy_code(self, category: str) -> Optional[Dict[str, Any]]:
+        """Return ``{"code", "score"}`` of the promoted policy program, or None."""
+        entry = self._policy_codes.get(category)
+        return dict(entry) if entry else None
+
+    def save_policy_code(self, category: str, code: str, score: float,
+                         steps: int = 0) -> bool:
+        old = self._policy_codes.get(category)
+        if old and old.get("code") == code:
+            return False  # unchanged — no churn, no re-save
+        self._policy_codes[category] = {"code": code, "score": score,
+                                        "steps": steps, "updated_at": time.time()}
+        self._save(self.root / "policy_codes.json", self._policy_codes)
+        return True
 
     # -- recipes (learned solutions) ----------------------------------------------
 

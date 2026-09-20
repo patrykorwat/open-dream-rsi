@@ -8,6 +8,13 @@ from open_dream_rsi.core.tree import DiscoveryTree, TreeNode
 from open_dream_rsi.core.simulator import ReplaySimulator
 from open_dream_rsi.core.dreamer import DreamEngine
 from open_dream_rsi.core.agent import DreamAgent
+from open_dream_rsi.core.policygen import (
+    PolicyGenerator,
+    PolicySandbox,
+    PolicyValidationError,
+    extract_python_block,
+    validate_policy_source,
+)
 from open_dream_rsi.utils.evaluator import PolicyEvaluator
 from open_dream_rsi.llm import LLMConfig, OpenAICompatibleClient, StubClient
 from open_dream_rsi.loop import AutoRSIRuntime, Task, CycleReport
@@ -22,6 +29,11 @@ __all__ = [
     "ReplaySimulator",
     "DreamEngine",
     "DreamAgent",
+    "PolicyGenerator",
+    "PolicySandbox",
+    "PolicyValidationError",
+    "extract_python_block",
+    "validate_policy_source",
     "PolicyEvaluator",
     "LLMConfig",
     "OpenAICompatibleClient",

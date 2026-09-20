@@ -22,6 +22,15 @@ error in the real world. **Open Dream-RSI** works in two phases:
 2. **Offline Dreaming:** Instead of running expensive real-world rollouts, the agent "dreams" over the execution history. It evaluates thousands of strategy variants in an offline simulator, consuming zero additional external tool calls.
 3. **Deployment:** The best generated strategy is shipped back into online execution.
 
+Beyond the parameter-level dreaming, the loop also closes section 3 of the
+paper ("dreaming with code"): each cycle, the LLM **rewrites the exploration
+policy itself** as a small Python program (`choose_action(frontier, step)`).
+Candidates are statically validated (AST gate), executed only in an isolated
+sandbox (`python -I`, scrubbed env, timeout) and scored by **off-policy replay**
+on the recorded discovery history — a candidate replaces the incumbent only
+when it demonstrably beats it. A crashing or cheating policy can never break
+the loop: expansion falls back to the greedy baseline.
+
 ---
 
 ## 🤖 LLM integration (OpenAI-compatible)
@@ -206,8 +215,10 @@ quality at substantially reduced online budget — at library scale.
   [Harkit2004/dream-rsi-skill](https://github.com/Harkit2004/dream-rsi-skill),
   [mailbobg/Pi-RSI](https://github.com/mailbobg/Pi-RSI), …).
   What this repo aims to differentiate on: an **always-on autonomous supervisor** (self-scheduling
-  cycles with an API-call budget guard), **persistent cross-run memory** (dreamed policies +
-  verified-solution recipes as warm starts), a live web dashboard, a measurable API-saving
+  cycles with an API-call budget guard), **LLM-written exploration policies** with sandboxed
+  off-policy replay and evidence-based promotion (section 3, closed), **persistent cross-run
+  memory** (dreamed policies + verified-solution recipes as warm starts), a live web dashboard,
+  a measurable API-saving
   benchmark (`bench`), sandboxed verification, zero runtime dependencies, MIT license.
 * **OpenRSI / OpenMLE / Frontis-MA1** ([FrontisAI/OpenRSI](https://github.com/FrontisAI/OpenRSI)) —
   a different layer of the same problem. They post-train model *weights*

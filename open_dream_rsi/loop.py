@@ -27,6 +27,12 @@ from typing import Any, Callable, Dict, List, Optional
 
 from open_dream_rsi.core.agent import ChatClient
 from open_dream_rsi.core.dreamer import DreamEngine
+from open_dream_rsi.core.policygen import (
+    PolicyGenerator,
+    PolicySandbox,
+    greedy_replay_score,
+    replay_world,
+)
 from open_dream_rsi.core.simulator import ReplaySimulator
 from open_dream_rsi.core.tree import DiscoveryTree
 from open_dream_rsi.memory import DreamMemory
@@ -101,6 +107,7 @@ class AutoRSIRuntime:
         interval_seconds: float = 300.0,
         on_event: Optional[Callable[[str, Dict[str, Any]], None]] = None,
         max_tokens: int = 2048,
+        enable_policy_code: bool = True,
     ):
         self.client = client
         self.memory = memory
@@ -112,6 +119,12 @@ class AutoRSIRuntime:
         self.api_calls_used = 0
         self.max_tokens = max_tokens
         self.on_event = on_event
+        # Section-3 "dreaming with code": the LLM rewrites the exploration
+        # policy itself; promoted candidates steer tree expansion online.
+        self.enable_policy_code = enable_policy_code
+        self.policy_sandbox = PolicySandbox()
+        self._policy_gen = PolicyGenerator(client, sandbox=self.policy_sandbox,
+                                           max_tokens=max_tokens)
 
     def _emit(self, kind: str, **data: Any) -> None:
         """Push a live event to an optional observer (dashboard, logger, ...)."""
@@ -178,10 +191,10 @@ class AutoRSIRuntime:
 
         solved = False
         improved = ""
-        state_id = best_node.node_id if best_node else tree.root_id
         for _ in range(task.max_attempts):
             if self.api_calls_used >= self.api_call_budget:
                 break
+            state_id = self._next_expansion(tree, category)
             self._emit("llm_call", task_id=task.task_id, category=category,
                        attempt=len(tree.nodes), temperature=float((policy or {}).get("temperature", 0.7)))
             code = self._propose_candidate(task, policy, recipe, feedback)
@@ -220,6 +233,11 @@ class AutoRSIRuntime:
         self._emit("dream_done", task_id=task.task_id, category=category, policy=best_policy)
         if self.memory.get_policy(category) != best_policy:
             self.memory.save_policy(category, best_policy)
+        # -- section 3: the LLM rewrites the exploration policy itself ------------
+        try:
+            self._maybe_evolve_policy_code(task, tree, report)
+        except Exception as exc:  # policy evolution must never break the loop
+            self.memory.log_event("policy_error", task_id=task.task_id, error=str(exc)[:300])
         self.memory.archive_tree(task.task_id, tree)
         self.memory.log_event(
             "task", task_id=task.task_id, category=category,
@@ -230,6 +248,76 @@ class AutoRSIRuntime:
         return solved, improved
 
     # -- helpers --------------------------------------------------------------------
+
+    def _frontier(self, tree: DiscoveryTree) -> List[Dict[str, Any]]:
+        """Every visited node is expandable (re-expanding = branching, like MCTS)."""
+        return [
+            {"node_id": n.node_id, "action": n.action, "score": n.score,
+             "children": len(n.children)}
+            for n in tree.nodes.values()
+        ]
+
+    def _next_expansion(self, tree: DiscoveryTree, category: str) -> Optional[str]:
+        """Pick the node to expand next — LLM-written policy if promoted, greedy else.
+
+        The promoted policy program runs in the sandbox (never in-process);
+        any crash/timeout/invalid choice falls back to the greedy baseline,
+        so a bad policy can only cost diversity, never the loop.
+        """
+        if tree.root_id is None:
+            return None
+        frontier = self._frontier(tree)
+        if not frontier:
+            return tree.root_id  # every node expanded — extend from the root again
+        entry = self.memory.get_policy_code(category)
+        if entry:
+            run = self.policy_sandbox.choose(entry["code"], frontier, len(tree.nodes))
+            ids = {n["node_id"] for n in frontier}
+            if run.ok and run.choice in ids:
+                return run.choice
+        return max(frontier, key=lambda n: n["score"])["node_id"]
+
+    def _maybe_evolve_policy_code(self, task: Task, tree: DiscoveryTree,
+                                  report: CycleReport) -> None:
+        """Section-3 step: LLM rewrites the exploration policy, gate promotes on evidence."""
+        if not self.enable_policy_code or self.api_calls_used >= self.api_call_budget:
+            return
+        world = replay_world(tree)
+        if len(world) < 2:
+            return  # too little recorded history to score a policy fairly
+        entry = self.memory.get_policy_code(task.category)
+        incumbent_source = entry["code"] if entry else None
+        incumbent_score = (entry["score"] if entry
+                           else greedy_replay_score(world))
+        # Don't re-ask the LLM unless the replay world has grown meaningfully
+        # since the last generation — dreaming stays free, calls do not.
+        if entry and len(world) - int(entry.get("steps", 0)) < 2:
+            return
+        self._emit("policy_gen", task_id=task.task_id, category=task.category,
+                   incumbent_score=round(incumbent_score, 4))
+        calls = [self.api_calls_used]
+        result = self._policy_gen.generate(
+            task.category, incumbent_source, incumbent_score, tree, api_calls=calls)
+        extra = calls[0] - self.api_calls_used
+        report.api_calls += extra
+        self.api_calls_used = calls[0]
+        for _ in range(extra):
+            self._emit("llm_call", task_id=task.task_id, category=task.category,
+                       attempt=len(tree.nodes), temperature=0.9, sub_kind="policy_gen")
+        if result.source is None:
+            self.memory.log_event("policy_rejected", task_id=task.task_id,
+                                  category=task.category, reason=result.error[:300])
+            self._emit("policy_rejected", task_id=task.task_id,
+                       category=task.category, reason=result.error[:200])
+            return
+        if self.memory.save_policy_code(task.category, result.source, result.score):
+            report.improvements.append(
+                f"{task.category}: new exploration policy (replay {result.score:.3f})")
+            self.memory.log_event("policy_promoted", task_id=task.task_id,
+                                  category=task.category, score=result.score)
+            self._emit("policy_promoted", task_id=task.task_id,
+                       category=task.category, score=round(result.score, 4),
+                       code=result.source[:800])
 
     def _seed_tree(self, task: Task, policy: Optional[Dict[str, float]]) -> DiscoveryTree:
         tree = DiscoveryTree()
