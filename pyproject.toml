@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-dream-rsi"
+version = "0.1.0"
+description = "Open-source implementation of the Dream-RSI (Recursive Self-Improvement through Evolving Worlds) architecture."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "patrykorwat" }]
+keywords = ["llm", "agents", "self-improvement", "offline-rl", "dreamer"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/patrykorwat/open-dream-rsi"
+Repository = "https://github.com/patrykorwat/open-dream-rsi"
+
+[tool.setuptools.packages.find]
+include = ["open_dream_rsi*"]
