@@ -37,6 +37,7 @@ def cmd_loop(args: argparse.Namespace) -> int:
         api_call_budget=args.budget,
         dream_iterations=args.dream_iters,
         interval_seconds=args.interval,
+        max_tokens=args.max_tokens,
     )
     if args.once:
         report = runtime.run_once()
@@ -79,6 +80,8 @@ def main(argv: list[str] | None = None) -> int:
     loop.add_argument("--provider", default="openai", choices=["openai", "cursor", "local"])
     loop.add_argument("--model", default=None)
     loop.add_argument("--budget", type=int, default=20, help="max API calls per cycle")
+    loop.add_argument("--max-tokens", type=int, default=2048,
+                      help="completion budget per LLM call (raise for reasoning models)")
     loop.add_argument("--dream-iters", type=int, default=60)
     loop.add_argument("--interval", type=float, default=300.0, help="seconds between cycles")
     loop.add_argument("--cycles", type=int, default=None, help="stop after N cycles")
@@ -97,6 +100,8 @@ def main(argv: list[str] | None = None) -> int:
     dash.add_argument("--tasks", default=None, help="JSON task file (default: built-in demo set)")
     dash.add_argument("--interval", type=float, default=1.0, help="seconds between cycles")
     dash.add_argument("--budget", type=int, default=40)
+    dash.add_argument("--max-tokens", type=int, default=2048,
+                      help="completion budget per LLM call (raise for reasoning models)")
     dash.set_defaults(func=cmd_dashboard)
 
     bench = sub.add_parser("bench", help="benchmark dreaming loop vs cold baseline")
@@ -133,7 +138,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 
     run_dashboard(host=args.host, port=args.port, provider=args.provider,
                   model=args.model, tasks_file=args.tasks, interval=args.interval,
-                  budget=args.budget, memory_root=args.memory)
+                  budget=args.budget, memory_root=args.memory, max_tokens=args.max_tokens)
     return 0
 
 
