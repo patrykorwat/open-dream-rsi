@@ -193,9 +193,22 @@ quality at substantially reduced online budget — at library scale.
 
 * **Dream-RSI: Recursive Self-Improvement through Evolving Worlds**
   (Zheng et al., Google / Google DeepMind / UMD, [arXiv:2609.14858](https://arxiv.org/abs/2609.14858)) —
-  the paper this library implements. Official code: [zhengkid/Dream-RSI](https://github.com/zhengkid/Dream-RSI)
-  (release pending at time of writing). Open Dream-RSI is, to our knowledge,
-  the first runnable open implementation of the architecture.
+  the paper this library implements. Official repo: [zhengkid/Dream-RSI](https://github.com/zhengkid/Dream-RSI);
+  method explainer: [dream-rsi.com](https://dream-rsi.com/).
+* Since the paper's release (2026-09-14) several **independent implementations** have appeared;
+  this repo is one of them, not the first. Notable peers:
+  [TheAstrayDev/dream-rsi-sdk](https://github.com/TheAstrayDev/dream-rsi-sdk) (model-agnostic
+  adapter SDK, strict replay, seven built-in exploration policies, evidence-based promotion
+  gates — LLM-written policy code on their roadmap),
+  [robinber/dream-rsi-spark](https://github.com/robinber/dream-rsi-spark) (independent section-3
+  implementation: local Qwen + CUDA kernel exploration on NVIDIA DGX Spark), plus agent/skill
+  variants ([lesterppo/hermes-dream-rsi](https://github.com/lesterppo/hermes-dream-rsi),
+  [Harkit2004/dream-rsi-skill](https://github.com/Harkit2004/dream-rsi-skill),
+  [mailbobg/Pi-RSI](https://github.com/mailbobg/Pi-RSI), …).
+  What this repo aims to differentiate on: an **always-on autonomous supervisor** (self-scheduling
+  cycles with an API-call budget guard), **persistent cross-run memory** (dreamed policies +
+  verified-solution recipes as warm starts), a live web dashboard, a measurable API-saving
+  benchmark (`bench`), sandboxed verification, zero runtime dependencies, MIT license.
 * **OpenRSI / OpenMLE / Frontis-MA1** ([FrontisAI/OpenRSI](https://github.com/FrontisAI/OpenRSI)) —
   a different layer of the same problem. They post-train model *weights*
   (SFT+RL, a 35B meta-evolution agent on MLE-Bench); Open Dream-RSI optimises
