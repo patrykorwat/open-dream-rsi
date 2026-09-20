@@ -91,6 +91,23 @@ Full runnable example (online LLM loop + offline dreaming): `examples/optimize_k
 
 ---
 
+## 🖥️ Live dashboard
+
+Watch the loop work in a browser — one command, no dependencies:
+
+```bash
+python -m open_dream_rsi dashboard                      # mock LLM, zero setup, port 8765
+python -m open_dream_rsi dashboard --provider cursor    # real model via Cursor Models API
+```
+
+Dark single-page UI: KPIs (cycles / solved / API budget / dream iterations),
+live event feed, per-task attempt boards with score bars and code diff-downs,
+dreamed-policy gauges per category and the learned recipe library.
+
+![dashboard](docs/screenshots/odr_full.png)
+
+---
+
 ## 🤖 Autonomous RSI loop (Hermes-style supervisor)
 
 The runtime runs the improvement cycle **by itself**, with no human in the loop:
