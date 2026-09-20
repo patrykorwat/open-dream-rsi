@@ -100,6 +100,7 @@ class AutoRSIRuntime:
         dream_iterations: int = 60,
         interval_seconds: float = 300.0,
         on_event: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+        max_tokens: int = 2048,
     ):
         self.client = client
         self.memory = memory
@@ -109,6 +110,7 @@ class AutoRSIRuntime:
         self.dream_iterations = dream_iterations
         self.interval_seconds = interval_seconds
         self.api_calls_used = 0
+        self.max_tokens = max_tokens
         self.on_event = on_event
 
     def _emit(self, kind: str, **data: Any) -> None:
@@ -260,7 +262,7 @@ class AutoRSIRuntime:
                     {"role": "user", "content": user},
                 ],
                 temperature=temperature,
-                max_tokens=1024,
+                max_tokens=self.max_tokens,
             )
         except Exception as exc:  # provider error => skip this attempt, keep dreaming
             self.memory.log_event("llm_error", task_id=task.task_id, error=str(exc)[:300])

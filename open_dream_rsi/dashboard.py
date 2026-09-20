@@ -193,7 +193,7 @@ class DashboardState:
 def run_dashboard(host: str = "0.0.0.0", port: int = 8765, provider: str = "mock",
                   model: Optional[str] = None, tasks_file: Optional[str] = None,
                   interval: float = 1.0, budget: int = 40, memory_root: str = ".dream_rsi_dashboard",
-                  block: bool = True) -> None:
+                  max_tokens: int = 2048, block: bool = True) -> None:
     if tasks_file:
         raw = json.loads(open(tasks_file, encoding="utf-8").read())
         demo_tasks = [Task(**t) for t in raw]
@@ -219,7 +219,7 @@ def run_dashboard(host: str = "0.0.0.0", port: int = 8765, provider: str = "mock
         return AutoRSIRuntime(
             client=client, memory=holder["memory"], tasks=demo_tasks,
             api_call_budget=budget, dream_iterations=90, interval_seconds=interval,
-            on_event=state.handle_event,
+            max_tokens=max_tokens, on_event=state.handle_event,
         )
 
     runtime = build_runtime()

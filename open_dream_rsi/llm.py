@@ -81,6 +81,8 @@ class LLMConfig:
         )
         if cfg.api_key is None and api_key_env:
             cfg.api_key = os.environ.get(api_key_env)
+        if cfg.api_key is None and preset == "local":
+            cfg.api_key = "local"  # vLLM/Ollama accept any bearer token
         return cfg
 
     @classmethod
@@ -136,9 +138,23 @@ class OpenAICompatibleClient:
         }
         data = self._post("/chat/completions", payload)
         try:
-            return data["choices"][0]["message"]["content"]
+            message = data["choices"][0]["message"]
         except (KeyError, IndexError) as exc:  # unexpected response shape
             raise LLMError(f"Unexpected API response: {data!r}") from exc
+        content = message.get("content")
+        if content:
+            return content
+        # Reasoning models on vLLM (e.g. Qwen NVFP4 builds) may return content=None
+        # with the text in a separate 'reasoning' field, or truncate mid-reasoning.
+        reasoning = message.get("reasoning")
+        if reasoning:
+            return reasoning
+        raise LLMError(
+            f"Empty completion from {model or self.config.model} "
+            f"(finish_reason={data['choices'][0].get('finish_reason')}). "
+            "The model may have spent the whole token budget on reasoning — "
+            "raise max_tokens or check the served model."
+        )
 
     def complete(
         self,
