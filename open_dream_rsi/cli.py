@@ -88,8 +88,27 @@ def main(argv: list[str] | None = None) -> int:
     status = sub.add_parser("status", help="show learned policies, recipes, recent events")
     status.set_defaults(func=cmd_status)
 
+    dash = sub.add_parser("dashboard", help="serve the live web dashboard")
+    dash.add_argument("--host", default="127.0.0.1")
+    dash.add_argument("--port", type=int, default=8765)
+    dash.add_argument("--provider", default="mock", choices=["mock", "openai", "cursor", "local"])
+    dash.add_argument("--model", default=None)
+    dash.add_argument("--tasks", default=None, help="JSON task file (default: built-in demo set)")
+    dash.add_argument("--interval", type=float, default=1.0, help="seconds between cycles")
+    dash.add_argument("--budget", type=int, default=40)
+    dash.set_defaults(func=cmd_dashboard)
+
     args = parser.parse_args(argv)
     return args.func(args)
+
+
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    from open_dream_rsi.dashboard import run_dashboard
+
+    run_dashboard(host=args.host, port=args.port, provider=args.provider,
+                  model=args.model, tasks_file=args.tasks, interval=args.interval,
+                  budget=args.budget, memory_root=args.memory)
+    return 0
 
 
 if __name__ == "__main__":

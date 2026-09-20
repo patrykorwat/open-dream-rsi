@@ -99,6 +99,7 @@ class AutoRSIRuntime:
         api_call_budget: int = 20,
         dream_iterations: int = 60,
         interval_seconds: float = 300.0,
+        on_event: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ):
         self.client = client
         self.memory = memory
@@ -108,12 +109,22 @@ class AutoRSIRuntime:
         self.dream_iterations = dream_iterations
         self.interval_seconds = interval_seconds
         self.api_calls_used = 0
+        self.on_event = on_event
+
+    def _emit(self, kind: str, **data: Any) -> None:
+        """Push a live event to an optional observer (dashboard, logger, ...)."""
+        if self.on_event:
+            try:
+                self.on_event(kind, data)
+            except Exception:  # an observer must never break the loop
+                pass
 
     # -- one full cycle ----------------------------------------------------------
 
     def run_once(self) -> CycleReport:
         report = CycleReport()
         tasks = self._tasks() if callable(self._tasks) else list(self._tasks)
+        self._emit("cycle_start", tasks=[t.task_id for t in tasks])
         for task in tasks:
             if self.api_calls_used >= self.api_call_budget:
                 report.stopped_reason = "api_budget_exhausted"
@@ -126,6 +137,7 @@ class AutoRSIRuntime:
                 report.improvements.append(improved)
 
         self.memory.log_event("cycle", **report.to_dict())
+        self._emit("cycle_done", **report.to_dict())
         return report
 
     def run_forever(self, max_cycles: Optional[int] = None) -> None:
@@ -166,12 +178,18 @@ class AutoRSIRuntime:
         for _ in range(task.max_attempts):
             if self.api_calls_used >= self.api_call_budget:
                 break
+            self._emit("llm_call", task_id=task.task_id, category=category,
+                       attempt=len(tree.nodes), temperature=float((policy or {}).get("temperature", 0.7)))
             code = self._propose_candidate(task, policy, recipe, feedback)
             self.api_calls_used += 1
             report.api_calls += 1
             if code is None:
                 continue
             result = self.verifier.run(code, task.tests)
+            self._emit("verification", task_id=task.task_id, category=category,
+                       score=round(result.score, 3), ok=result.ok,
+                       errors=result.detail if isinstance(result.detail, (list, str)) else str(result.detail),
+                       code=code[:800])
             node = tree.add_node(
                 f"{task.task_id}/try-{len(tree.nodes)}",
                 action="write_code",
@@ -188,11 +206,14 @@ class AutoRSIRuntime:
             feedback = str(result.detail)[:600]
 
         # -- offline dreaming on whatever we collected (free, no API) -------------
+        self._emit("dreaming", task_id=task.task_id, category=category,
+                   nodes=len(tree.nodes), iterations=self.dream_iterations)
         engine = DreamEngine(simulator=ReplaySimulator(tree))
         if policy:
             engine.policy_parameters = dict(policy)
         best_policy = engine.run_offline_optimization(iterations=self.dream_iterations)
         report.dream_iterations += self.dream_iterations
+        self._emit("dream_done", task_id=task.task_id, category=category, policy=best_policy)
         if self.memory.get_policy(category) != best_policy:
             self.memory.save_policy(category, best_policy)
         self.memory.archive_tree(task.task_id, tree)
@@ -200,6 +221,8 @@ class AutoRSIRuntime:
             "task", task_id=task.task_id, category=category,
             solved=solved, nodes=len(tree.nodes), policy=best_policy,
         )
+        self._emit("task_done", task_id=task.task_id, category=category,
+                   solved=solved, nodes=len(tree.nodes))
         return solved, improved
 
     # -- helpers --------------------------------------------------------------------
