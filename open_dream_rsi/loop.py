@@ -20,7 +20,9 @@ Nothing waits for a human between cycles:
 
 from __future__ import annotations
 
+import hashlib
 import json
+import random
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
@@ -30,8 +32,9 @@ from open_dream_rsi.core.dreamer import DreamEngine
 from open_dream_rsi.core.policygen import (
     PolicyGenerator,
     PolicySandbox,
+    frontier_entry,
     greedy_replay_score,
-    replay_world,
+    outcome_map,
 )
 from open_dream_rsi.core.simulator import ReplaySimulator
 from open_dream_rsi.core.tree import DiscoveryTree
@@ -53,6 +56,9 @@ Test cases (call -> expected):
 Your best previous solution (may be absent):
 {recipe}
 
+Branch you are expanding from (code already tried on this branch, may be absent):
+{branch}
+
 Policy hints (higher temperature -> try something genuinely different):
 {policy}
 
@@ -69,6 +75,11 @@ class Task:
     prompt: str
     tests: List[Dict[str, Any]]
     max_attempts: int = 4
+
+
+#: Minimum new replay steps required before re-asking the LLM for a policy
+#: (one full cycle's worth of evidence — keeps generation cost bounded).
+POLICY_REGROW_STEPS = 4
 
 
 @dataclass
@@ -108,6 +119,8 @@ class AutoRSIRuntime:
         on_event: Optional[Callable[[str, Dict[str, Any]], None]] = None,
         max_tokens: int = 2048,
         enable_policy_code: bool = True,
+        explore_epsilon: float = 0.15,
+        rng_seed: int = 0,
     ):
         self.client = client
         self.memory = memory
@@ -119,6 +132,13 @@ class AutoRSIRuntime:
         self.api_calls_used = 0
         self.max_tokens = max_tokens
         self.on_event = on_event
+        # Baseline online exploration: with probability epsilon the greedy
+        # fallback tries a never-expanded branch instead of the best-score
+        # leaf. Without it, one high-score decoy (plausible code that never
+        # passes hidden tests) monopolises the budget forever and the
+        # recorded world never contains the evidence the replay gate needs.
+        self.explore_epsilon = explore_epsilon
+        self._rng = random.Random(rng_seed)
         # Section-3 "dreaming with code": the LLM rewrites the exploration
         # policy itself; promoted candidates steer tree expansion online.
         self.enable_policy_code = enable_policy_code
@@ -195,9 +215,10 @@ class AutoRSIRuntime:
             if self.api_calls_used >= self.api_call_budget:
                 break
             state_id = self._next_expansion(tree, category)
+            branch_code = self._branch_code(tree, state_id)
             self._emit("llm_call", task_id=task.task_id, category=category,
                        attempt=len(tree.nodes), temperature=float((policy or {}).get("temperature", 0.7)))
-            code = self._propose_candidate(task, policy, recipe, feedback)
+            code = self._propose_candidate(task, policy, recipe, feedback, branch_code)
             self.api_calls_used += 1
             report.api_calls += 1
             if code is None:
@@ -209,7 +230,7 @@ class AutoRSIRuntime:
                        code=code[:800])
             node = tree.add_node(
                 f"{task.task_id}/try-{len(tree.nodes)}",
-                action="write_code",
+                action=f"write_code:{hashlib.sha1(code.strip().encode()).hexdigest()[:8]}",
                 result={"code": code, "errors": result.detail},
                 score=result.score,
                 parent_id=state_id,
@@ -235,7 +256,7 @@ class AutoRSIRuntime:
             self.memory.save_policy(category, best_policy)
         # -- section 3: the LLM rewrites the exploration policy itself ------------
         try:
-            self._maybe_evolve_policy_code(task, tree, report)
+            self._maybe_evolve_policy_code(task, tree, report, solved=solved)
         except Exception as exc:  # policy evolution must never break the loop
             self.memory.log_event("policy_error", task_id=task.task_id, error=str(exc)[:300])
         self.memory.archive_tree(task.task_id, tree)
@@ -250,12 +271,22 @@ class AutoRSIRuntime:
     # -- helpers --------------------------------------------------------------------
 
     def _frontier(self, tree: DiscoveryTree) -> List[Dict[str, Any]]:
-        """Every visited node is expandable (re-expanding = branching, like MCTS)."""
-        return [
-            {"node_id": n.node_id, "action": n.action, "score": n.score,
-             "children": len(n.children)}
-            for n in tree.nodes.values()
-        ]
+        """Every visited node is expandable (re-expanding = branching, like MCTS).
+
+        Delegates to ``frontier_entry`` so the online view and the replay
+        harness show the policy exactly the same observation fields.
+        """
+        outcomes = outcome_map(tree)
+        return [frontier_entry(n, outcomes) for n in tree.nodes.values()]
+
+    def _branch_code(self, tree: DiscoveryTree, state_id: Optional[str]) -> Optional[str]:
+        """Code of the node being expanded — the branch context for the proposal."""
+        if not state_id:
+            return None
+        node = tree.nodes.get(state_id)
+        if node is None or node.action == "warm_start":
+            return None
+        return (node.result or {}).get("code")
 
     def _next_expansion(self, tree: DiscoveryTree, category: str) -> Optional[str]:
         """Pick the node to expand next — LLM-written policy if promoted, greedy else.
@@ -269,29 +300,41 @@ class AutoRSIRuntime:
         frontier = self._frontier(tree)
         if not frontier:
             return tree.root_id  # every node expanded — extend from the root again
+        step = len(tree.nodes)
         entry = self.memory.get_policy_code(category)
         if entry:
-            run = self.policy_sandbox.choose(entry["code"], frontier, len(tree.nodes))
+            run = self.policy_sandbox.choose(entry["code"], frontier, step)
             ids = {n["node_id"] for n in frontier}
             if run.ok and run.choice in ids:
                 return run.choice
+        # epsilon-exploration baseline: occasionally try a uniformly random
+        # node instead of re-polishing the best-score leaf (escapes decoys
+        # only by luck — this is the "epsilon-greedy" comparison arm)
+        if self.explore_epsilon > 0 and self._rng.random() < self.explore_epsilon:
+            if frontier:
+                return self._rng.choice(frontier)["node_id"]
         return max(frontier, key=lambda n: n["score"])["node_id"]
 
     def _maybe_evolve_policy_code(self, task: Task, tree: DiscoveryTree,
-                                  report: CycleReport) -> None:
+                                  report: CycleReport, solved: bool = False) -> None:
         """Section-3 step: LLM rewrites the exploration policy, gate promotes on evidence."""
         if not self.enable_policy_code or self.api_calls_used >= self.api_call_budget:
             return
-        world = replay_world(tree)
-        if len(world) < 2:
-            return  # too little recorded history to score a policy fairly
         entry = self.memory.get_policy_code(task.category)
+        if solved and entry:
+            # the category already solves itself — exploration calls are for
+            # categories that actually struggle (cold-start generation still
+            # runs once, so every category gets its first policy)
+            return
+        steps = sum(1 for n in tree.nodes.values() if n.parent_id)
+        if steps < 2:
+            return  # too little recorded history to score a policy fairly
         incumbent_source = entry["code"] if entry else None
         incumbent_score = (entry["score"] if entry
-                           else greedy_replay_score(world))
-        # Don't re-ask the LLM unless the replay world has grown meaningfully
-        # since the last generation — dreaming stays free, calls do not.
-        if entry and len(world) - int(entry.get("steps", 0)) < 2:
+                           else greedy_replay_score(tree))
+        # Don't re-ask the LLM unless the replay world has grown by a full
+        # cycle's worth of new evidence — dreaming stays free, calls do not.
+        if entry and steps - int(entry.get("steps", 0)) < POLICY_REGROW_STEPS:
             return
         self._emit("policy_gen", task_id=task.task_id, category=task.category,
                    incumbent_score=round(incumbent_score, 4))
@@ -310,7 +353,8 @@ class AutoRSIRuntime:
             self._emit("policy_rejected", task_id=task.task_id,
                        category=task.category, reason=result.error[:200])
             return
-        if self.memory.save_policy_code(task.category, result.source, result.score):
+        if self.memory.save_policy_code(task.category, result.source, result.score,
+                                        steps=steps):
             report.improvements.append(
                 f"{task.category}: new exploration policy (replay {result.score:.3f})")
             self.memory.log_event("policy_promoted", task_id=task.task_id,
@@ -333,6 +377,7 @@ class AutoRSIRuntime:
         policy: Optional[Dict[str, float]],
         recipe: Optional[str],
         feedback: str,
+        branch_code: Optional[str] = None,
     ) -> Optional[str]:
         temperature = float((policy or {}).get("temperature", 0.7))
         user = REFINE_USER_TEMPLATE.format(
@@ -340,6 +385,7 @@ class AutoRSIRuntime:
             prompt=task.prompt,
             tests="\n".join(f"  {t['call']} -> {t['expected']!r}" for t in task.tests),
             recipe=recipe or "(none yet)",
+            branch=branch_code or "(fresh branch — nothing tried here yet)",
             policy=json.dumps(policy or {}),
             feedback=feedback or "(none)",
         )

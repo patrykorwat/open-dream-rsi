@@ -116,6 +116,15 @@ def main(argv: list[str] | None = None) -> int:
     bench.add_argument("--markdown", action="store_true", help="print markdown table")
     bench.set_defaults(func=cmd_bench)
 
+    polbench = sub.add_parser(
+        "bench-policy",
+        help="benchmark LLM-written exploration policies on the decoy-trap suite")
+    polbench.add_argument("--cycles", type=int, default=8)
+    polbench.add_argument("--budget", type=int, default=24)
+    polbench.add_argument("--format", choices=["json", "md", "svg"], default="json")
+    polbench.add_argument("--out", default=None, help="write output to a file")
+    polbench.set_defaults(func=cmd_bench_policy)
+
     args = parser.parse_args(argv)
     return args.func(args)
 
@@ -133,6 +142,28 @@ def cmd_bench(args: argparse.Namespace) -> int:
     print(json.dumps(summary, indent=2))
     if args.markdown:
         print(to_markdown(summary))
+    return 0
+
+
+def cmd_bench_policy(args: argparse.Namespace) -> int:
+    from open_dream_rsi.bench_policy import (
+        run_policy_benchmark,
+        to_markdown as pol_markdown,
+        to_svg,
+    )
+
+    summary = run_policy_benchmark(cycles=args.cycles, budget=args.budget)
+    if args.format == "json":
+        text = json.dumps(summary, indent=2)
+    elif args.format == "md":
+        text = pol_markdown(summary)
+    else:
+        text = to_svg(summary)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"wrote {args.out}")
+    else:
+        print(text)
     return 0
 
 
