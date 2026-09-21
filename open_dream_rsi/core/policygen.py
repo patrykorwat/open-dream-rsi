@@ -11,7 +11,7 @@ Pipeline per cycle:
       -> static validation (AST, no sandbox needed)
       -> sandboxed execution (``python -I``, scrubbed env, timeout — never
          in-process: candidate code must not see the runtime's API keys)
-      -> off-policy replay scoring on the recorded discovery history
+      -> counterfactual rollout scoring on the recorded discovery history
       -> promotion gate: replace the incumbent only on evidence
 
 Policy contract
@@ -20,9 +20,20 @@ A candidate module must define::
 
     def choose_action(frontier: list[dict], step: int) -> str | dict
 
-where ``frontier`` is a list of leaf observations
-``{"node_id", "action", "score", "children"}`` and the return is the
-``node_id`` to expand next (or ``{"node_id": ...}``).
+where ``frontier`` is a list of node observations::
+
+    {"node_id": str, "action": str, "score": float, "parent_id": str|None,
+     "children": int, "outcome": float, "errors": list[str]}
+
+and the return is the ``node_id`` to expand next (or ``{"node_id": ...}``).
+
+Scoring is a **counterfactual rollout**, not a mean over recorded picks: the
+candidate replays the recorded tree step by step, and each expansion yields
+the node's *next recorded child* (falling back to a repeat of its last child,
+or to its own score when the branch was never expanded). This rewards
+policies that would have opened branches the logging policy neglected —
+the decoy-trap case: a plausible high-score leaf that fails hidden tests
+forever, hiding the fix one expansion away on a different branch.
 """
 
 from __future__ import annotations
@@ -38,11 +49,16 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from open_dream_rsi.core.tree import DiscoveryTree
 
-#: Weight of action diversity in the replay score (beta_2 of the paper, library scale).
+#: Weight of branch diversity in the rollout score (the paper's beta_2:
+#: replay objectives reward visiting *different* branches, not just high-
+#: score ones — the counterfactual counterpart of UCB's visit-count term).
+#: Applied identically to candidates and the greedy baseline.
 DIVERSITY_BETA = 0.2
-#: Fraction of steps that must return a frontier-valid choice for a candidate
-#: to be promotable at all.
+#: Fraction of rollout steps that must return a frontier-valid choice for a
+#: candidate to be promotable at all.
 MIN_VALIDITY = 0.8
+#: Rollout horizon in steps; scaled up for bigger worlds.
+MIN_HORIZON = 8
 
 POLICY_CONTRACT = (
     "You are writing an exploration policy for a Dream-RSI loop. Reply with "
@@ -50,10 +66,20 @@ POLICY_CONTRACT = (
     "    def choose_action(frontier, step):\n"
     "        ...\n"
     "frontier is a list of dicts: {'node_id': str, 'action': str, "
-    "'score': float, 'children': int}. Return the node_id (str) of the leaf "
-    "to expand next (higher score = better result so far). Rules: pure "
-    "stdlib, no imports, no file/network/process access, no leading-underscore "
-    "attributes, must terminate, must handle an empty frontier (return None)."
+    "'score': float, 'parent_id': str|None, 'children': int, "
+    "'outcome': float, 'errors': list[str]}. Return the node_id (str) of the "
+    "node to expand next. 'score' is what the verifier gave that node's own "
+    "attempt; 'children' is how often it was expanded so far; 'outcome' is "
+    "the best score found anywhere below it (equal to its score when "
+    "unexplored); 'errors' lists which tests still fail on it. Beware DECOY "
+    "TRAPS: a high-score leaf whose errors never change is plausible code "
+    "that will fail hidden tests forever — re-expanding it burns the budget, "
+    "while branches with different (or no) failures hide the real prize. "
+    "Good policies balance exploiting promising branches against trying "
+    "under-expanded ones. "
+    "Rules: pure stdlib, no imports, no file/network/process access, no "
+    "leading-underscore attributes, must terminate, must handle an empty "
+    "frontier (return None)."
 )
 
 _BANNED_NODES = (ast.Import, ast.ImportFrom, ast.Global, ast.Nonlocal, ast.Try)
@@ -144,6 +170,66 @@ class PolicyRun:
         return self.error is None
 
 
+#: Child script for the BATCHED counterfactual rollout: exec the candidate once,
+#: then run the fixed reward harness loop in-process inside the sandbox
+#: (one subprocess per candidate, not per step — sandbox spawns are ~40ms and a
+#: rollout is 8-24 steps). The reward logic below must mirror _simulate().
+_ROLLOUT_HARNESS = """
+import json, sys, traceback
+src = open(sys.argv[1], encoding="utf-8").read()
+world = json.load(open(sys.argv[2], encoding="utf-8"))
+nodes = world["nodes"]                 # [{node_id, action, score, parent_id, outcome, errors}]
+child_lists = world["child_lists"]     # parent_id -> [child node_ids, recorded order]
+horizon = world["horizon"]
+report = {"rewards": [], "picks": [], "invalid": 0, "error": None}
+try:
+    ns = {}
+    exec(compile(src, "policy.py", "exec"), ns)
+    fn = ns.get("choose_action")
+    if not callable(fn):
+        raise RuntimeError("choose_action is not defined/callable")
+    by_id = {n["node_id"]: n for n in nodes}
+    child_index = {}
+    for pid, kids in child_lists.items():
+        for i, kid in enumerate(kids):
+            child_index[kid] = i
+    cursor = {}
+    for step in range(horizon):
+        visible = []
+        for n in nodes:
+            pid = n["parent_id"]
+            if pid is None or cursor.get(pid, 0) > child_index.get(n["node_id"], 10**9):
+                e = dict(n)
+                e["children"] = cursor.get(n["node_id"], 0)
+                visible.append(e)
+        visible_ids = {e["node_id"] for e in visible}
+        try:
+            out = fn(visible, step)
+        except Exception:
+            report["error"] = traceback.format_exc(limit=3)
+            break
+        pick = out if isinstance(out, str) else ((out or {}).get("node_id") if isinstance(out, dict) else None)
+        if pick not in visible_ids:
+            report["invalid"] += 1
+            report["rewards"].append(0.0)
+            report["picks"].append("!invalid")
+            continue
+        kids = child_lists.get(pick, [])
+        c = cursor.get(pick, 0)
+        if kids and c < len(kids):
+            report["rewards"].append(by_id[kids[c]]["score"])       # next recorded child
+        else:
+            # re-expanding an exhausted/never-recorded branch rediscovers its
+            # best known continuation — the honest off-policy estimate
+            report["rewards"].append(by_id[pick]["outcome"])
+        report["picks"].append(pick)
+        cursor[pick] = c + 1
+except Exception:
+    report["error"] = traceback.format_exc(limit=3)
+print(json.dumps(report))
+"""
+
+
 class PolicySandbox:
     """Executes candidate policy code in an isolated subprocess.
 
@@ -188,84 +274,227 @@ class PolicySandbox:
         return PolicyRun(report.get("choice"), report.get("error"))
 
 
+    def rollout(self, source: str, world: Dict[str, Any]) -> Tuple[Optional[List[float]], List[str], int, Optional[str]]:
+        """Batched counterfactual rollout: candidate executes ONCE in the sandbox,
+        the reward loop runs inside the child process (see _ROLLOUT_HARNESS).
+
+        Returns ``(rewards, picks, invalid_count, error)``.
+        """
+        try:
+            validate_policy_source(source)
+        except PolicyValidationError as exc:
+            return None, [], 0, f"validation: {exc}"
+        d = tempfile.mkdtemp(prefix="odr-rollout-")
+        src_path = Path(d, "policy.py")
+        world_path = Path(d, "world.json")
+        harness_path = Path(d, "harness.py")
+        src_path.write_text(source, encoding="utf-8")
+        world_path.write_text(json.dumps(world), encoding="utf-8")
+        harness_path.write_text(_ROLLOUT_HARNESS, encoding="utf-8")
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-I", str(harness_path), str(src_path), str(world_path)],
+                capture_output=True, text=True, timeout=self.timeout,
+                env={"PATH": "/usr/bin:/bin"},  # no API keys inside the sandbox
+                cwd=d,
+            )
+        except subprocess.TimeoutExpired:
+            return None, [], 0, "policy rollout timed out"
+        finally:
+            for p in (src_path, world_path, harness_path):
+                p.unlink(missing_ok=True)
+            Path(d).rmdir()
+        line = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
+        try:
+            report = json.loads(line)
+        except (json.JSONDecodeError, IndexError):
+            return None, [], 0, f"rollout crash: {proc.stderr[:200]!r}"
+        if report.get("error"):
+            return None, [], 0, str(report["error"])[:400]
+        return (report.get("rewards") or [], report.get("picks") or [],
+                int(report.get("invalid", 0)), None)
+
+
 # ---------------------------------------------------------------------------
-# Off-policy replay scoring on recorded discovery histories
+# Counterfactual rollout scoring on recorded discovery histories
 # ---------------------------------------------------------------------------
 
-def replay_world(tree: DiscoveryTree) -> List[Tuple[List[Dict[str, Any]], str]]:
-    """Reconstruct recorded decision steps: (frontier_snapshot, chosen_node_id).
+def outcome_map(tree: DiscoveryTree) -> Dict[str, float]:
+    """node_id -> best verifier score found anywhere below (or at) the node.
 
-    nodes are replayed in insertion order; the parent of each appended node
-    is the expansion the online loop actually chose at that step. The frontier
-    at step *i* is every node seen so far (re-expanding a visited node is a
-    legal branch), which is what gives replay its discriminating power:
-    a policy must pick BETTER nodes than greedy, not just any leaf.
+    Back-propagated like MCTS values: the seed that eventually led to the fix
+    carries the fix's score, which is what lets the policy (and the replay)
+    credit a branch the recorded path neglected.
     """
     nodes = list(tree.nodes.values())
-    world: List[Tuple[List[Dict[str, Any]], str]] = []
-    for i in range(1, len(nodes)):
-        child = nodes[i]
-        parent_id = child.parent_id
-        if parent_id:
-            seen = nodes[:i]
-            frontier = [
-                {"node_id": n.node_id, "action": n.action, "score": n.score,
-                 "children": sum(1 for m in seen if m.parent_id == n.node_id)}
-                for n in seen
-            ]
-            if parent_id in {n["node_id"] for n in frontier}:
-                world.append((frontier, parent_id))
-    return world
+    values = {n.node_id: n.score for n in nodes}
+    # propagate bottom-up (children always appear after parents in insertion order)
+    for n in reversed(nodes):
+        kids = [values.get(c, float("-inf")) for c in _child_ids(tree, n.node_id)]
+        if kids:
+            values[n.node_id] = max(values[n.node_id], max(kids))
+    return values
 
 
-def score_replay(policy_run_scores: List[Tuple[bool, float, str]]) -> float:
-    """Combine per-step results into one replay score.
+def _child_ids(tree: DiscoveryTree, node_id: str) -> List[str]:
+    node = tree.nodes.get(node_id)
+    return list(node.children) if node else []
 
-    Each item: (choice_in_frontier, score_of_chosen_node, action_of_chosen).
-    score = mean(chosen scores) + DIVERSITY_BETA * distinct actions / steps.
+
+def frontier_entry(node: Any, outcomes: Dict[str, float]) -> Dict[str, Any]:
+    """The observation dict a policy sees for one node (online + replay parity)."""
+    errors = (node.result or {}).get("errors") or []
+    return {
+        "node_id": node.node_id,
+        "action": node.action,
+        "score": node.score,
+        "parent_id": node.parent_id,
+        "children": len(node.children),
+        "outcome": outcomes.get(node.node_id, node.score),
+        "errors": [str(e)[:160] for e in errors[:3]],
+    }
+
+
+def rollout_world_payload(tree: DiscoveryTree,
+                          horizon: Optional[int] = None) -> Dict[str, Any]:
+    """Serialisable counterfactual world: nodes + recorded child lists.
+
+    ``child_lists[parent_id]`` are the node ids of that parent's children in
+    recorded (insertion) order — the fixed "answers" the rollout receives:
+    the k-th expansion of a node reveals its k-th recorded child and pays its
+    verifier score. Visibility follows the same rule (a node becomes visible
+    once its parent has been expanded past the child's index), so counter-
+    factual rollouts only discover branches the recorded tree actually has.
     """
-    steps = len(policy_run_scores)
-    if not steps:
-        return 0.0
-    valid = [r for r in policy_run_scores if r[0]]
-    validity = len(valid) / steps
-    mean_score = sum(r[1] for r in valid) / steps  # invalid steps count as 0
-    distinct = len({r[2] for r in valid})
-    return mean_score + DIVERSITY_BETA * (distinct / steps)
+    nodes = list(tree.nodes.values())
+    outcomes = outcome_map(tree)
+    child_lists: Dict[str, List[str]] = {}
+    for n in nodes:
+        if n.parent_id:
+            child_lists.setdefault(n.parent_id, []).append(n.node_id)
+    steps = sum(1 for n in nodes if n.parent_id)
+    horizon = horizon or max(MIN_HORIZON, steps)
+    return {
+        "nodes": [frontier_entry(n, outcomes) for n in nodes],
+        "child_lists": child_lists,
+        "horizon": horizon,
+    }
+
+
+def _simulate_step_rewards(world: Dict[str, Any], pick_fn: Any) -> Tuple[List[float], List[str], int, Optional[str]]:
+    """In-process mirror of the sandboxed rollout harness (keep in sync!).
+
+    ``pick_fn(visible_entries, step) -> node_id|None``; returns
+    ``(rewards, picks, invalid_count, error)``.
+    """
+    nodes, child_lists, horizon_n = world["nodes"], world["child_lists"], world["horizon"]
+    by_id = {n["node_id"]: n for n in nodes}
+    child_index: Dict[str, int] = {}
+    for kids in child_lists.values():
+        for i, kid in enumerate(kids):
+            child_index[kid] = i
+    cursor: Dict[str, int] = {}
+    rewards: List[float] = []
+    picks: List[str] = []
+    invalid = 0
+    for step in range(horizon_n):
+        visible: List[Dict[str, Any]] = []
+        for n in nodes:
+            pid = n["parent_id"]
+            if pid is None or cursor.get(pid, 0) > child_index.get(n["node_id"], 10 ** 9):
+                e = dict(n)
+                e["children"] = cursor.get(n["node_id"], 0)
+                visible.append(e)
+        visible_ids = {e["node_id"] for e in visible}
+        try:
+            pick = pick_fn(visible, step)
+        except Exception as exc:  # noqa: BLE001 — baseline errors are fatal too
+            return rewards, picks, invalid, str(exc)
+        if pick not in visible_ids:
+            invalid += 1
+            rewards.append(0.0)
+            picks.append("!invalid")
+            continue
+        kids = child_lists.get(pick, [])
+        c = cursor.get(pick, 0)
+        if kids and c < len(kids):
+            rewards.append(by_id[kids[c]]["score"])
+        else:
+            rewards.append(by_id[pick]["outcome"])  # best known continuation
+        picks.append(pick)
+        cursor[pick] = c + 1
+    return rewards, picks, invalid, None
+
+
+def _rollout_objective(rewards: List[float], picks: List[str]) -> float:
+    """Mean reward + branch-diversity bonus (beta_2), comparable across arms."""
+    total = len(rewards) or 1
+    distinct = len({p for p in picks if p != "!invalid"})
+    return sum(rewards) / total + DIVERSITY_BETA * distinct / total
+
+
+def rollout_score(
+    sandbox: Optional[PolicySandbox],
+    source: str,
+    tree: DiscoveryTree,
+    horizon: Optional[int] = None,
+) -> Tuple[float, str]:
+    """Counterfactual rollout of a candidate policy on the recorded tree.
+
+    Step by step the rollout re-observes the visible frontier (with
+    as-of-now ``children``/``outcome``/``errors``), asks the policy which node
+    to expand, and receives that node's *next recorded child score* as the
+    rollout reward. A node whose recorded children are exhausted repeats its
+    last child; a node never expanded in the real run yields its own score —
+    the honest counterfactual floor, no invented outcomes. Invalid choices
+    score 0 and count against the validity floor.
+
+    Returns ``(objective, error)`` where objective = mean reward + beta_2 *
+    distinct-branch coverage; error is non-empty when the candidate crashed,
+    was statically invalid, or dropped below the validity floor.
+    """
+    if not tree.nodes:
+        return float("-inf"), "empty tree"
+    world = rollout_world_payload(tree, horizon)
+    rewards, picks, invalid, err = sandbox.rollout(source, world)  # type: ignore[union-attr]
+    if err or rewards is None:
+        return float("-inf"), err or "no rollout steps"
+    total = len(rewards)
+    if total == 0:
+        return float("-inf"), "no rollout steps"
+    if invalid / total > 1.0 - MIN_VALIDITY:
+        return float("-inf"), f"invalid choices in {100 * invalid / total:.0f}% of steps"
+    return _rollout_objective(rewards, picks), ""
+
+
+def greedy_rollout_score(tree: DiscoveryTree,
+                         horizon: Optional[int] = None) -> float:
+    """Baseline: greedy expansion (best visible score) on the same rollout."""
+    if not tree.nodes:
+        return float("-inf")
+    world = rollout_world_payload(tree, horizon)
+
+    def pick(visible: List[Dict[str, Any]], step: int) -> Optional[str]:
+        return max(visible, key=lambda e: e["score"])["node_id"] if visible else None
+
+    rewards, picks, invalid, err = _simulate_step_rewards(world, pick)
+    total = len(rewards)
+    if err or total == 0:
+        return float("-inf")
+    if invalid / total > 1.0 - MIN_VALIDITY:
+        return float("-inf")
+    return _rollout_objective(rewards, picks)
 
 
 def evaluate_policy(sandbox: PolicySandbox, source: str,
-                    world: List[Tuple[List[Dict[str, Any]], str]]) -> Tuple[float, str]:
-    """Score a candidate on one replay world. Returns (score, error).
-
-    A candidate that crashes or is statically invalid scores -inf via error.
-    """
-    if not world:
-        return float("-inf"), "empty replay world"
-    results: List[Tuple[bool, float, str]] = []
-    for step, (frontier, _recorded) in enumerate(world):
-        run = sandbox.choose(source, frontier, step)
-        if run.error is not None:
-            return float("-inf"), run.error
-        ids = {n["node_id"]: n for n in frontier}
-        node = ids.get(run.choice or "")
-        if node is None:
-            results.append((False, 0.0, "invalid"))
-        else:
-            results.append((True, node["score"], node["action"]))
-    validity = sum(1 for r in results if r[0]) / len(results)
-    if validity < MIN_VALIDITY:
-        return float("-inf"), f"invalid choices in {100 * (1 - validity):.0f}% of steps"
-    return score_replay(results), ""
+                    tree: DiscoveryTree) -> Tuple[float, str]:
+    """Score a candidate policy by counterfactual rollout. (score, error)."""
+    return rollout_score(sandbox, source, tree)
 
 
-def greedy_replay_score(world: List[Tuple[List[Dict[str, Any]], str]]) -> float:
-    """Baseline: the loop's current greedy expansion (best-score leaf)."""
-    results = []
-    for frontier, _ in world:
-        best = max(frontier, key=lambda n: n["score"])
-        results.append((True, best["score"], best["action"]))
-    return score_replay(results)
+def greedy_replay_score(tree: DiscoveryTree) -> float:
+    """Back-compat alias for :func:`greedy_rollout_score`."""
+    return greedy_rollout_score(tree)
 
 
 # ---------------------------------------------------------------------------
@@ -301,7 +530,7 @@ class PolicyGenerator:
 
     One generation costs one API call (plus one repair call when the answer
     fails static validation). Promotion requires beating the greedy/incumbent
-    replay score in the same cycle — evidence over vibes.
+    rollout score in the same cycle — evidence over vibes.
     """
 
     def __init__(self, client: Any, sandbox: Optional[PolicySandbox] = None,
@@ -319,8 +548,8 @@ class PolicyGenerator:
         tree: DiscoveryTree,
         api_calls: Optional[List[int]] = None,
     ) -> GenerationResult:
-        world = replay_world(tree)
-        if not world:
+        steps = sum(1 for n in tree.nodes.values() if n.parent_id)
+        if steps < 2:
             return GenerationResult(None, float("-inf"), "no replay history yet")
         summary = self._tree_summary(tree)
         feedback = ""
@@ -357,7 +586,7 @@ class PolicyGenerator:
             except PolicyValidationError as exc:
                 feedback = f"static validation failed: {exc}"
                 continue
-            score, err = evaluate_policy(self.sandbox, source, world)
+            score, err = evaluate_policy(self.sandbox, source, tree)
             if err:
                 feedback = f"replay rejected the policy: {err}"
                 continue
@@ -374,6 +603,8 @@ class PolicyGenerator:
     def _tree_summary(tree: DiscoveryTree, max_nodes: int = 12) -> str:
         lines = []
         for node in list(tree.nodes.values())[-max_nodes:]:
+            errs = (node.result or {}).get("errors") or []
+            errs_txt = (" errors=" + "; ".join(str(e)[:40] for e in errs[:2])) if errs else ""
             lines.append(f"  {node.node_id}  action={node.action}  "
-                         f"score={node.score:.3f}  children={len(node.children)}")
+                         f"score={node.score:.3f}  children={len(node.children)}{errs_txt}")
         return "\n".join(lines) or "(empty)"

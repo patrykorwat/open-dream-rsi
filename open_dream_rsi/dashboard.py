@@ -91,10 +91,9 @@ class MockLLM:
         if "exploration policy" in system:            # policy-generation call
             return ("```python\ndef choose_action(frontier, step):\n"
                     "    if not frontier:\n        return None\n"
-                    "    ranked = sorted(frontier, key=lambda n: n['score'], reverse=True)\n"
-                    "    if step % 4 == 3 and len(ranked) > 1:\n"
-                    "        return ranked[-1]['node_id']\n"
-                    "    return ranked[0]['node_id']\n```")
+                    "    fresh = [n for n in frontier if n['children'] == 0]\n"
+                    "    pool = fresh or frontier\n"
+                    "    return max(pool, key=lambda n: (n['outcome'], n['score']))['node_id']\n```")
         prompt = messages[-1]["content"]
         category = prompt.split("[")[1].split("]")[0] if "[" in prompt else "?"
         buggy, fixed = SOLUTIONS.get(category, (None, None))

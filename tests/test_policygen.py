@@ -1,4 +1,4 @@
-"""Tests for the section-3 policy generator: gate, sandbox, replay, loop wiring.
+"""Tests for the section-3 policy generator: gate, sandbox, rollout, loop wiring.
 
 Run:  python -m unittest discover -s tests
 """
@@ -13,8 +13,8 @@ from open_dream_rsi.core.policygen import (
     PolicyValidationError,
     evaluate_policy,
     extract_python_block,
-    greedy_replay_score,
-    replay_world,
+    greedy_rollout_score,
+    rollout_score,
     validate_policy_source,
 )
 from open_dream_rsi.core.tree import DiscoveryTree
@@ -25,7 +25,8 @@ BEST_POLICY = """
 def choose_action(frontier, step):
     if not frontier:
         return None
-    ranked = sorted(frontier, key=lambda n: (n["score"], n["children"]), reverse=True)
+    ranked = sorted(frontier, key=lambda n: (n["children"] == 0, n["outcome"],
+                                             n["score"]), reverse=True)
     return ranked[0]["node_id"]
 """
 
@@ -33,15 +34,22 @@ GOOD_POLICY = BEST_POLICY  # sandbox tests only need a valid contract-compliant 
 
 
 def build_tree():
-    """A small loop-shaped tree: root + scored leaves in insertion order."""
+    """Loop-shaped tree: seed -> decoy chain (.667) with a .333 branch that
+    leads to the fix (1.0) one expansion deeper — the decoy-trap world."""
     tree = DiscoveryTree()
-    root = tree.add_node("root", action="seed", result={}, score=0.0)
-    scores = [0.1, 0.4, 0.2, 0.6, 0.3]
-    prev = root.node_id
-    for i, s in enumerate(scores):
-        node = tree.add_node(f"n{i}", action=f"write_code_v{i}", result={},
-                             score=s, parent_id=prev)
+    seed = tree.add_node("seed", action="warm_start", result={}, score=0.0)
+    decoy = tree.add_node("d0", action="write_code:decoy", result={
+        "errors": ["t2 -> got 2 != 3"]}, score=0.667, parent_id=seed.node_id)
+    prev = decoy.node_id
+    for i in range(3):  # decoy polish chain — re-expanding never improves
+        node = tree.add_node(f"d{i+1}", action=f"write_code:decoy{i}", result={
+            "errors": ["t2 -> got 2 != 3"]}, score=0.667, parent_id=prev)
         prev = node.node_id
+    prom = tree.add_node("p0", action="write_code:promising", result={
+        "errors": ["t0 -> got [2] != [1,2]", "t1 -> got [] != [3]"]},
+        score=0.333, parent_id=seed.node_id)
+    tree.add_node("fix", action="write_code:fixed", result={}, score=1.0,
+                  parent_id=prom.node_id)
     return tree
 
 
@@ -72,8 +80,12 @@ class ValidationTest(unittest.TestCase):
 class SandboxTest(unittest.TestCase):
     def setUp(self):
         self.sandbox = PolicySandbox(timeout=5.0)
-        self.frontier = [{"node_id": "a", "action": "x", "score": 0.2, "children": 0},
-                         {"node_id": "b", "action": "y", "score": 0.9, "children": 0}]
+        self.frontier = [{"node_id": "a", "action": "x", "score": 0.2,
+                          "parent_id": None, "children": 0, "outcome": 0.2,
+                          "errors": []},
+                         {"node_id": "b", "action": "y", "score": 0.9,
+                          "parent_id": None, "children": 0, "outcome": 0.9,
+                          "errors": []}]
 
     def test_good_policy_choice(self):
         run = self.sandbox.choose(GOOD_POLICY, self.frontier, 0)
@@ -109,30 +121,46 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual(run.choice, "a")
 
 
-class ReplayTest(unittest.TestCase):
+class RolloutTest(unittest.TestCase):
     def setUp(self):
         self.tree = build_tree()
-        self.world = replay_world(self.tree)
         self.sandbox = PolicySandbox()
 
-    def test_replay_world_shape(self):
-        self.assertEqual(len(self.world), len(self.tree.nodes) - 1)
-        for frontier, chosen in self.world:
-            self.assertIn(chosen, {n["node_id"] for n in frontier})
-
-    def test_greedy_baseline_scores_reasonably(self):
-        score = greedy_replay_score(self.world)
-        self.assertGreater(score, 0.0)
-
-    def test_evaluate_policy_beats_or_matches_greedy(self):
-        score, err = evaluate_policy(self.sandbox, GOOD_POLICY, self.world)
-        self.assertEqual(err, "")
-        self.assertGreaterEqual(score, greedy_replay_score(self.world) - 1e-9)
-
-    def test_empty_world_is_rejected(self):
-        score, err = evaluate_policy(self.sandbox, GOOD_POLICY, [])
+    def test_empty_tree_rejected(self):
+        score, err = rollout_score(self.sandbox, GOOD_POLICY, DiscoveryTree())
         self.assertEqual(score, float("-inf"))
         self.assertIn("empty", err)
+
+    def test_greedy_falls_into_the_decoy_trap(self):
+        # greedy sees the .667 decoy forever; the fix (.333 child) stays hidden
+        score = greedy_rollout_score(self.tree)
+        self.assertLess(score, 0.75)
+
+    def test_explorer_policy_beats_greedy_on_the_trap(self):
+        # prefers unexpanded nodes ranked by back-propagated outcome:
+        # opens the seed's low-score branch that leads to the fix
+        explorer = """
+def choose_action(frontier, step):
+    if not frontier:
+        return None
+    fresh = [n for n in frontier if n['children'] == 0]
+    pool = fresh or frontier
+    return max(pool, key=lambda n: n['outcome'])['node_id']
+"""
+        score, err = rollout_score(self.sandbox, explorer, self.tree)
+        self.assertEqual(err, "")
+        self.assertGreater(score, greedy_rollout_score(self.tree))
+
+    def test_crashing_policy_scores_minus_inf(self):
+        score, err = rollout_score(self.sandbox,
+                                   "def choose_action(f, s):\n    return 1/0\n",
+                                   self.tree)
+        self.assertEqual(score, float("-inf"))
+
+    def test_evaluate_policy_alias(self):
+        score, err = evaluate_policy(self.sandbox, GOOD_POLICY, self.tree)
+        self.assertEqual(err, "")
+        self.assertGreaterEqual(score, greedy_rollout_score(self.tree) - 1e-9)
 
 
 class ScriptedPolicyClient:
@@ -151,21 +179,32 @@ class GeneratorGateTest(unittest.TestCase):
     def setUp(self):
         self.tree = build_tree()
 
-    def _generate(self, source):
+    def _generate(self, source, incumbent_score=None):
         gen = PolicyGenerator(ScriptedPolicyClient(source), max_tokens=None)
-        world_baseline = greedy_replay_score(replay_world(self.tree))
-        return gen.generate("math", None, world_baseline, self.tree)
+        baseline = (greedy_rollout_score(self.tree)
+                    if incumbent_score is None else incumbent_score)
+        return gen.generate("math", None, baseline, self.tree)
 
     def test_beating_incumbent_is_promoted(self):
-        result = self._generate(GOOD_POLICY)
+        explorer = """
+def choose_action(frontier, step):
+    if not frontier:
+        return None
+    fresh = [n for n in frontier if n['children'] == 0]
+    pool = fresh or frontier
+    return max(pool, key=lambda n: n['outcome'])['node_id']
+"""
+        result = self._generate(explorer)
         self.assertIsNotNone(result.source)
         self.assertEqual(result.error, "")
 
     def test_worse_than_incumbent_is_rejected(self):
+        # incumbent set above anything reachable on this tree (a strong
+        # remembered policy) — anything short of it must not promote
         worst = ("def choose_action(frontier, step):\n"
                  "    if not frontier:\n        return None\n"
-                 "    return min(frontier, key=lambda n: n['score'])['node_id']\n")
-        result = self._generate(worst)
+                 "    return min(frontier, key=lambda n: n['outcome'])['node_id']\n")
+        result = self._generate(worst, incumbent_score=0.99)
         self.assertIsNone(result.source)
         self.assertIn("replay score", result.error)
 
@@ -203,7 +242,7 @@ class LoopPolicyIntegrationTest(unittest.TestCase):
                         prompt="Implement add(a, b).",
                         tests=[{"call": "add(2, 3)", "expected": 5}],
                         max_attempts=3)],
-            api_call_budget=20, dream_iterations=10,
+            api_call_budget=20, dream_iterations=10, rng_seed=42,
         )
 
     def test_cycle_promotes_policy_and_persists_it(self):

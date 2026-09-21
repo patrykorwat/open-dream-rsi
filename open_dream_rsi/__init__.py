@@ -20,6 +20,11 @@ from open_dream_rsi.llm import LLMConfig, OpenAICompatibleClient, StubClient
 from open_dream_rsi.loop import AutoRSIRuntime, Task, CycleReport
 from open_dream_rsi.memory import DreamMemory
 from open_dream_rsi.tools import CodeVerifier
+from open_dream_rsi.bench_policy import (
+    TRAP_SUITES,
+    run_policy_arm,
+    run_policy_benchmark,
+)
 
 __version__ = "0.2.0"
 
@@ -43,5 +48,8 @@ __all__ = [
     "CycleReport",
     "DreamMemory",
     "CodeVerifier",
+    "TRAP_SUITES",
+    "run_policy_arm",
+    "run_policy_benchmark",
     "__version__",
 ]
