@@ -39,6 +39,7 @@ def cmd_loop(args: argparse.Namespace) -> int:
         interval_seconds=args.interval,
         max_tokens=args.max_tokens,
         enable_policy_code=not args.no_policy_code,
+        enable_knowledge=not args.no_knowledge,
     )
     if args.once:
         report = runtime.run_once()
@@ -55,10 +56,17 @@ def cmd_status(args: argparse.Namespace) -> int:
     memory = DreamMemory(args.memory)
     print(f"Memory root: {memory.root.resolve()}")
     for name, label in (("policies.json", "Dreamed policies"),
-                        ("recipes.json", "Best-known solutions")):
+                        ("recipes.json", "Best-known solutions"),
+                        ("lessons.json", "Curated knowledge (lessons)")):
         data = memory._load(memory.root / name, {})
         print(f"\n{label}: {len(data)}")
         for key, entry in data.items():
+            if name == "lessons.json":
+                print(f"  [{key}] {len(entry)} lesson(s)")
+                for l in entry:
+                    print(f"    - [{l.get('trigger', '')}] {l.get('text', '')[:80]} "
+                          f"(wins={l.get('wins', 0)} uses={l.get('uses', 0)})")
+                continue
             print(f"  [{key}] {entry.get('updated_at') or entry.get('saved_at')} "
                   f"score={entry.get('score', '-')} "
                   f"{entry.get('params', '')}")
@@ -86,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
     loop.add_argument("--dream-iters", type=int, default=60)
     loop.add_argument("--no-policy-code", action="store_true",
                       help="disable LLM-written exploration policies (section-3 step)")
+    loop.add_argument("--no-knowledge", action="store_true",
+                      help="disable the knowledge curator (lessons.json KB, section-4 step)")
     loop.add_argument("--interval", type=float, default=300.0, help="seconds between cycles")
     loop.add_argument("--cycles", type=int, default=None, help="stop after N cycles")
     loop.add_argument("--once", action="store_true", help="single cycle (for cron)")

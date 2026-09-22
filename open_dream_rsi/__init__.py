@@ -15,6 +15,14 @@ from open_dream_rsi.core.policygen import (
     extract_python_block,
     validate_policy_source,
 )
+from open_dream_rsi.core.curator import (
+    KnowledgeCurator,
+    LessonValidationError,
+    curate_lessons,
+    lesson_key,
+    select_lessons,
+    validate_lesson_items,
+)
 from open_dream_rsi.utils.evaluator import PolicyEvaluator
 from open_dream_rsi.llm import LLMConfig, OpenAICompatibleClient, StubClient
 from open_dream_rsi.loop import AutoRSIRuntime, Task, CycleReport
@@ -40,6 +48,12 @@ __all__ = [
     "extract_python_block",
     "validate_policy_source",
     "PolicyEvaluator",
+    "KnowledgeCurator",
+    "LessonValidationError",
+    "curate_lessons",
+    "lesson_key",
+    "select_lessons",
+    "validate_lesson_items",
     "LLMConfig",
     "OpenAICompatibleClient",
     "StubClient",
