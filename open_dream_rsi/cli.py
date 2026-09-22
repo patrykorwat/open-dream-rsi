@@ -135,8 +135,27 @@ def main(argv: list[str] | None = None) -> int:
     polbench.add_argument("--out", default=None, help="write output to a file")
     polbench.set_defaults(func=cmd_bench_policy)
 
+    mcp = sub.add_parser(
+        "mcp",
+        help="serve the loop as an MCP stdio server (OpenCode / Goose / Claude Code)")
+    mcp.add_argument("--tasks", default=None, help="task file (default $ODR_TASKS or tasks.json)")
+    mcp.add_argument("--memory", default=None,
+                     help="memory dir (default $ODR_MEMORY or .dream_rsi)")
+    mcp.set_defaults(func=cmd_mcp)
+
     args = parser.parse_args(argv)
     return args.func(args)
+
+
+def cmd_mcp(args: argparse.Namespace) -> int:
+    from open_dream_rsi.mcp import main as mcp_main
+
+    argv = []
+    if args.tasks:
+        argv += ["--tasks", args.tasks]
+    if args.memory:  # --memory is a top-level flag; forward it explicitly
+        argv += ["--memory", args.memory]
+    return mcp_main(argv)
 
 
 def cmd_bench(args: argparse.Namespace) -> int:
