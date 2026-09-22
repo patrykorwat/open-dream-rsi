@@ -1,5 +1,10 @@
 # Open Dream-RSI 🌙🤖
 
+> **📄 Preprint:** *Open Dream-RSI: An Open-Source Library for Recursive
+> Self-Improvement Around a Frozen LLM, with Replay-Gated Learned Policies and
+> a Curated Knowledge Base* — P. Orwat, 2026.
+> [**PDF**](paper/main.pdf) · [**LaTeX source**](paper/main.tex)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 

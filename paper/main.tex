@@ -325,25 +325,45 @@ caps, dedup, and prune logic are pinned by unit tests.
 \section{Related work and positioning}
 \label{sec:related}
 
-\cite{dreamrsi} (Dream-RSI: Recursive Self-Improvement through Evolving
-Worlds; Zheng et al., Google/DeepMind/UMD, arXiv:2609.14858) is the method
-this library implements; the official repository is
-\url{https://github.com/zhengkid/Dream-RSI}. Independent implementations
-include a model-agnostic adapter SDK with strict replay and evidence-based
-promotion gates \cite{drsdk}, a local-Qwen CUDA-kernel exploration on DGX
-Spark \cite{dspark}, and agent/skill variants \cite{hermesdrsi}. Against
-peers, this library differentiates on: the always-on budget-guarded
-supervisor; LLM-\emph{written} policy code (as opposed to a fixed policy
-menu) with counterfactual-replay promotion; a dedicated exploration benchmark
-(\texttt{bench-policy}); a curated lesson knowledge base with retrieval
-feedback; persistent cross-run memory; a live dashboard; zero dependencies;
-MIT license.
+\hdr{Discovery loops around frozen LLMs.} FunSearch \cite{funsearch} pairs a
+pretrained LLM with a systematic evaluator and evolves \emph{programs} rather
+than solutions, yielding new results in extremal combinatorics and bin
+packing; AlphaEvolve \cite{alphaevolve} generalises this to an evolutionary
+coding agent over a program database grounded by automatic evaluation. The
+G\"odel-machine ideal \cite{godel}---provably beneficial self-modification---is
+relaxed by the Darwin G\"odel Machine \cite{dgm}, which empirically validates
+each self-modification and grows an archive of agents. Dream-RSI
+\cite{dreamrsi} (Zheng et al., Google/DeepMind/UMD, arXiv:2609.14858) is the
+method this library implements; the official repository is
+\url{https://github.com/zhengkid/Dream-RSI}. Our contribution is at the
+library/infrastructure level within this family: the mechanisms above are
+proven at scale by their authors; we ship the same loop pattern as a
+dependency-free, budget-guarded, OpenAI-compatible tool and add the curator
+and the exploration-isolating benchmark.
 
-A different layer of the same problem is filled by OpenRSI/OpenMLE/Frontis-MA1
-\cite{openrsi}, which post-train weights (SFT+RL, a 35B meta-evolution agent
-on MLE-Bench); the two are complementary---their trained improver could be the
-frozen model behind our client, our dreaming loop could sit on top of their
-search.
+\hdr{Memory and self-generated policies in agents.} Reflexion
+\cite{reflexion} shows that verbal self-feedback stored in an episodic memory
+materially improves subsequent attempts---the same principle our knowledge
+curator operationalises persistently across runs; Voyager \cite{voyager}
+builds a persistent skill library of verified programs, the closest ancestor
+of our replay-gated policy promotion.
+
+\hdr{Independent implementations.} Since the paper's release several
+independent implementations have appeared: a model-agnostic adapter SDK with
+strict replay and evidence-based promotion gates \cite{drsdk}, a local-Qwen
+CUDA-kernel exploration on DGX Spark \cite{dspark}, and agent/skill variants
+\cite{hermesdrsi}. Against peers, this library differentiates on: the
+always-on budget-guarded supervisor; LLM-\emph{written} policy code (as
+opposed to a fixed policy menu) with counterfactual-replay promotion; a
+dedicated exploration benchmark (\texttt{bench-policy}); a curated lesson
+knowledge base with retrieval feedback; persistent cross-run memory; a live
+dashboard; zero dependencies; MIT license.
+
+\hdr{A different layer.} OpenRSI/OpenMLE/Frontis-MA1 \cite{openrsi,
+mlebench} post-train weights (SFT+RL, a 35B meta-evolution agent on
+MLE-Bench); the two layers are complementary---their trained improver could
+be the frozen model behind our client, our dreaming loop could sit on top of
+their search.
 
 \section{Limitations}
 \label{sec:limits}
@@ -386,11 +406,36 @@ than random escape. All artefacts pass structural gates before touching the
 loop; the gate, not trust, decides.
 
 
-\begin{thebibliography}{9}
+\begin{thebibliography}{99}
 \bibitem{dreamrsi} Zheng et al., \emph{Dream-RSI: Recursive
 Self-Improvement through Evolving Worlds}, arXiv:2609.14858, 2026.
+\bibitem{funsearch} B.~Romera-Paredes, M.~Barekatain, A.~Novikov, M.~Balog,
+M.~P.~Kumar, E.~Dupont, F.~J.~R.~Ruiz, J.~S.~Ellenberg, P.~Wang, O.~Fawzi,
+P.~Kohli, A.~Fawzi, \emph{Mathematical discoveries from program search with
+large language models}, Nature 625(7995), 2024.
+DOI:~10.1038/s41586-023-06924-6.
+\bibitem{alphaevolve} A.~Novikov, N.~V\~u, M.~Eisenberger, E.~Dupont,
+P.-S.~Huang, A.~Z.~Wagner, S.~Shirobokov, B.~Kozlovskii, et~al.,
+\emph{AlphaEvolve: A coding agent for scientific and algorithmic discovery},
+arXiv:2506.13131, 2025.
+\bibitem{dgm} J.~Zhang, S.~Hu, C.~Lu, R.~Lange, J.~Clune, \emph{Darwin
+G\"odel Machine: Open-Ended Evolution of Self-Improving Agents},
+arXiv:2505.22954, 2025.
+\bibitem{godel} J.~Schmidhuber, \emph{G\"odel Machines: Fully
+Self-Referential Optimal Universal Self-Improvers}, in B.~Goertzel and
+C.~Pennachin (eds.), \emph{Artificial General Intelligence}, Springer, 2006.
+\bibitem{reflexion} N.~Shinn, F.~Cassano, A.~Gopinath, K.~Narasimhan,
+S.~Yao, \emph{Reflexion: Language Agents with Verbal Reinforcement
+Learning}, Advances in Neural Information Processing Systems 36, 2023.
+arXiv:2303.11366.
+\bibitem{voyager} G.~Wang, Y.~Xie, Y.~Jiang, A.~Mandlekar, C.~Xiao, Y.~Zhu,
+L.~Fan, A.~Anandkumar, \emph{Voyager: An Open-Ended Embodied Agent with
+Large Language Models}, arXiv:2305.16291, 2023.
 \bibitem{openrsi} FrontisAI, \emph{OpenRSI / OpenMLE / Frontis-MA1},
 \url{https://github.com/FrontisAI/OpenRSI}.
+\bibitem{mlebench} J.~S.~Chan, N.~Chowdhury, et~al., \emph{MLE-bench:
+Evaluating Machine Learning Agents on Machine Learning Engineering},
+arXiv:2410.07095, 2024.
 \bibitem{drsdk} TheAstrayDev, \emph{dream-rsi-sdk},
 \url{https://github.com/TheAstrayDev/dream-rsi-sdk}.
 \bibitem{dspark} robinber, \emph{dream-rsi-spark},
