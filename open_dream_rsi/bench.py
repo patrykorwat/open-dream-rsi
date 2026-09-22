@@ -80,6 +80,10 @@ def run_arm(
         runtime = AutoRSIRuntime(
             client=client, memory=memory, tasks=tasks,
             api_call_budget=budget, dream_iterations=dream_iterations,
+            # This benchmark isolates dreaming + persistent memory; the
+            # knowledge curator and policy-code arms have their own
+            # benchmarks (bench-policy) — keep the machinery under test pure.
+            enable_knowledge=False,
         )
         runtime.api_calls_used = 0
         report = runtime.run_once()

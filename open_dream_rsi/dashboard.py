@@ -94,6 +94,14 @@ class MockLLM:
                     "    fresh = [n for n in frontier if n['children'] == 0]\n"
                     "    pool = fresh or frontier\n"
                     "    return max(pool, key=lambda n: (n['outcome'], n['score']))['node_id']\n```")
+        if "knowledge curator" in system:              # curation call
+            cat = ""
+            m = __import__("re").search(r"Category \[([\w]+)\]", prompt := messages[-1]["content"])
+            if m:
+                cat = m.group(1)
+            return ("```json\n[{\"trigger\": \"" + cat + " hidden branch\", "
+                    "\"text\": \"A plausible branch whose verifier errors never change will never "
+                    "improve; re-open the low-scoring sibling branch where the fix idea first appeared.\"}]\n```")
         prompt = messages[-1]["content"]
         category = prompt.split("[")[1].split("]")[0] if "[" in prompt else "?"
         buggy, fixed = SOLUTIONS.get(category, (None, None))
@@ -176,6 +184,12 @@ class DashboardState:
             policy_codes = {}
             for cat, entry in getattr(memory, "_policy_codes", {}).items():
                 policy_codes[cat] = {"code": entry["code"], "score": entry.get("score")}
+            lessons = {}
+            for cat, entries in getattr(memory, "_lessons", {}).items():
+                lessons[cat] = [{"trigger": l.get("trigger", ""),
+                                 "text": l.get("text", ""),
+                                 "wins": l.get("wins", 0), "uses": l.get("uses", 0)}
+                                for l in entries]
             policies = {cat: hist[-1] for cat, hist in self.policy_history.items() if hist}
             return {
                 "cycles": self.cycles,
@@ -193,6 +207,7 @@ class DashboardState:
                 "policy_history": self.policy_history,
                 "policy_codes": policy_codes,
                 "recipes": recipes,
+                "lessons": lessons,
             }
 
 
@@ -399,6 +414,7 @@ details summary{cursor:pointer;color:var(--acc);font-size:12px}
     <div class="panel"><h2>Evolved policy code (LLM-written, replay-gated)</h2><div id="policycodes"></div></div>
     <div class="panel"><h2>Recipe library — learned solutions</h2><div id="recipes"></div>
       <div class="foot">open-dream-rsi · stdlib only · policies &amp; recipes persist across restarts</div></div>
+    <div class="panel"><h2>Knowledge base — curated lessons from failures</h2><div id="lessons"></div></div>
   </div>
 </div>
 
@@ -406,7 +422,8 @@ details summary{cursor:pointer;color:var(--acc);font-size:12px}
 const $=s=>document.querySelector(s);
 const fmt=t=>new Date(t*1000).toLocaleTimeString();
 const ICONS={llm_call:"📡",verification:"🧪",dreaming:"🌙",dream_done:"✨",task_done:"🎯",
-cycle_start:"▶",cycle_done:"🔄",runtime_error:"💥",policy_gen:"🧬",policy_promoted:"🧬",policy_rejected:"🚫"};
+cycle_start:"▶",cycle_done:"🔄",runtime_error:"💥",policy_gen:"🧬",policy_promoted:"🧬",policy_rejected:"🚫",
+knowledge_curate:"📚",lessons_curated:"📚",lesson_rejected:"🚫"};
 async function act(a){await fetch('/api/'+a,{method:'POST'});refresh();}
 function evLine(e){
   const d=document.createElement('div');
@@ -420,6 +437,9 @@ function evLine(e){
   else if(e.kind==='policy_gen')txt=`${e.task_id}: asking LLM for a new exploration policy (incumbent ${(+e.incumbent_score).toFixed(3)})`;
   else if(e.kind==='policy_promoted')txt=`${e.task_id}: 🧬 new policy promoted (replay ${(+e.score).toFixed(3)})`;
   else if(e.kind==='policy_rejected')txt=`${e.task_id}: policy rejected — ${String(e.reason||'').slice(0,90)}`;
+  else if(e.kind==='knowledge_curate')txt=`${e.task_id}: 📚 curator digesting ${e.new_failures} new failure(s)`;
+  else if(e.kind==='lessons_curated')txt=`${e.task_id}: 📚 KB +${(e.added||[]).length} lesson(s), merged ${e.merged}`;
+  else if(e.kind==='lesson_rejected')txt=`${e.task_id}: lessons rejected — ${String(e.reason||'').slice(0,90)}`;
   else if(e.kind==='cycle_done')txt=`cycle done — ${e.tasks_solved}/${e.tasks_attempted} solved, ${e.api_calls} calls`;
   else if(e.kind==='cycle_start')txt='cycle start: '+(e.tasks||[]).join(', ');
   else if(e.kind==='runtime_error')txt=e.error;
@@ -468,6 +488,12 @@ async function refresh(){
     `<div style="margin-bottom:8px"><b style="font-size:12px;color:var(--ok)">✓ ${c}</b>
      <span style="color:var(--mut);font-size:11px">score ${e.score}</span><pre>${esc(e.code)}</pre></div>`).join('')
     :'<span style="color:var(--mut)">empty — the loop saves verified solutions here</span>';
+  const ls=Object.entries(s.lessons||{});
+  $('#lessons').innerHTML=ls.length?ls.map(([c,arr])=>
+    `<div style="margin-bottom:8px"><b style="font-size:12px;color:var(--dream)">📚 ${c}</b>`+
+    arr.map(l=>`<div style="font-size:12px;margin:3px 0 3px 10px"><span style="color:var(--mut)">[${esc(l.trigger)}]</span> ${esc(l.text)}
+      <span style="color:var(--mut);font-size:10px">wins ${l.wins} · uses ${l.uses}</span></div>`).join('')+`</div>`).join('')
+    :'<span style="color:var(--mut)">empty — the curator distils lessons from failures here</span>';
 }
 setInterval(refresh,700);refresh();
 </script>

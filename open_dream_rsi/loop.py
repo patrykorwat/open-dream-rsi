@@ -28,6 +28,14 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from open_dream_rsi.core.agent import ChatClient
+from open_dream_rsi.core.curator import (
+    KnowledgeCurator,
+    curate_lessons,
+    evidence_snippets,
+    format_lessons,
+    lesson_key,
+    select_lessons,
+)
 from open_dream_rsi.core.dreamer import DreamEngine
 from open_dream_rsi.core.policygen import (
     PolicyGenerator,
@@ -62,6 +70,9 @@ Branch you are expanding from (code already tried on this branch, may be absent)
 Policy hints (higher temperature -> try something genuinely different):
 {policy}
 
+Lessons learned from previous failures in this category (apply them):
+{lessons}
+
 Previous failure feedback:
 {feedback}
 
@@ -80,6 +91,11 @@ class Task:
 #: Minimum new replay steps required before re-asking the LLM for a policy
 #: (one full cycle's worth of evidence — keeps generation cost bounded).
 POLICY_REGROW_STEPS = 4
+
+#: Minimum NEW failed attempts since the last curation before the knowledge
+#: curator is consulted (failures are the raw material of the KB; without
+#: new evidence the call would restate lessons already stored).
+CURATOR_MIN_NEW_FAILURES = 1
 
 
 @dataclass
@@ -119,6 +135,7 @@ class AutoRSIRuntime:
         on_event: Optional[Callable[[str, Dict[str, Any]], None]] = None,
         max_tokens: int = 2048,
         enable_policy_code: bool = True,
+        enable_knowledge: bool = True,
         explore_epsilon: float = 0.15,
         rng_seed: int = 0,
     ):
@@ -145,6 +162,10 @@ class AutoRSIRuntime:
         self.policy_sandbox = PolicySandbox()
         self._policy_gen = PolicyGenerator(client, sandbox=self.policy_sandbox,
                                            max_tokens=max_tokens)
+        # Hermes-style knowledge curator: failures are distilled into a
+        # persistent, curated KB (lessons.json) retrieved into proposals.
+        self.enable_knowledge = enable_knowledge
+        self._curator = KnowledgeCurator(client, max_tokens=max_tokens)
 
     def _emit(self, kind: str, **data: Any) -> None:
         """Push a live event to an optional observer (dashboard, logger, ...)."""
@@ -211,14 +232,21 @@ class AutoRSIRuntime:
 
         solved = False
         improved = ""
+        failures: List[Dict[str, Any]] = []
+        surfaced: set = set()
         for _ in range(task.max_attempts):
             if self.api_calls_used >= self.api_call_budget:
                 break
             state_id = self._next_expansion(tree, category)
             branch_code = self._branch_code(tree, state_id)
+            lessons = self.memory.get_lessons(category)
+            picked = select_lessons(lessons, task.prompt)
+            keys = [lesson_key(l) for l in picked]
+            surfaced.update(keys)
             self._emit("llm_call", task_id=task.task_id, category=category,
                        attempt=len(tree.nodes), temperature=float((policy or {}).get("temperature", 0.7)))
-            code = self._propose_candidate(task, policy, recipe, feedback, branch_code)
+            code = self._propose_candidate(task, policy, recipe, feedback, branch_code,
+                                           format_lessons(picked) or "(none yet)")
             self.api_calls_used += 1
             report.api_calls += 1
             if code is None:
@@ -242,6 +270,13 @@ class AutoRSIRuntime:
                     improved = f"{category}: new best solution (score {result.score})"
                 break
             feedback = str(result.detail)[:600]
+            failures.append({"action": node.action, "score": result.score,
+                             "errors": [str(e)[:160] for e in (result.detail if isinstance(result.detail, list) else [result.detail])][:3]})
+
+        # One usage bump per lesson per cycle: surfaced = the lesson was put
+        # in front of the model; win = the task it was surfaced for solved.
+        if surfaced:
+            self.memory.record_lesson_usage(category, sorted(surfaced), win=solved)
 
         # -- offline dreaming on whatever we collected (free, no API) -------------
         self._emit("dreaming", task_id=task.task_id, category=category,
@@ -259,6 +294,11 @@ class AutoRSIRuntime:
             self._maybe_evolve_policy_code(task, tree, report, solved=solved)
         except Exception as exc:  # policy evolution must never break the loop
             self.memory.log_event("policy_error", task_id=task.task_id, error=str(exc)[:300])
+        # -- section 4: the knowledge curator distils failures into the KB ----------
+        try:
+            self._maybe_curate_knowledge(task, failures, report)
+        except Exception as exc:  # curation must never break the loop
+            self.memory.log_event("curator_error", task_id=task.task_id, error=str(exc)[:300])
         self.memory.archive_tree(task.task_id, tree)
         self.memory.log_event(
             "task", task_id=task.task_id, category=category,
@@ -363,6 +403,57 @@ class AutoRSIRuntime:
                        category=task.category, score=round(result.score, 4),
                        code=result.source[:800])
 
+    def _maybe_curate_knowledge(self, task: Task, failures: List[Dict[str, Any]],
+                               report: CycleReport) -> None:
+        """Section-4 step: distil this cycle's failures into the curated KB.
+
+        Call economy mirrors policy generation: the curator is only asked
+        when there is FAILURE evidence the KB has not already seen (its
+        stored evidence snippets are the dedup key), and never when the
+        budget is spent. Validated lessons MERGE into existing records;
+        dead ones (used often, never credited) are pruned on write.
+        """
+        if not self.enable_knowledge or not failures:
+            return
+        if self.api_calls_used >= self.api_call_budget:
+            return
+        existing = self.memory.get_lessons(task.category)
+        seen_evidence = set(self.memory.get_digested(task.category))
+        snippets = evidence_snippets(failures)
+        new_snippets = [s for s in snippets if s not in seen_evidence]
+        if len(new_snippets) < CURATOR_MIN_NEW_FAILURES:
+            return  # KB has already digested exactly this evidence
+        self._emit("knowledge_curate", task_id=task.task_id,
+                   category=task.category, new_failures=len(new_snippets))
+        calls = [self.api_calls_used]
+        distilled, err = self._curator.distill(
+            task.category, task.prompt, failures, existing, api_calls=calls)
+        extra = calls[0] - self.api_calls_used
+        report.api_calls += extra
+        self.api_calls_used = calls[0]
+        for _ in range(extra):
+            self._emit("llm_call", task_id=task.task_id, category=task.category,
+                       attempt=-1, temperature=0.5, sub_kind="curator")
+        if err or not distilled:
+            self.memory.log_event("lesson_rejected", task_id=task.task_id,
+                                  category=task.category, reason=(err or "empty payload")[:300])
+            self._emit("lesson_rejected", task_id=task.task_id,
+                       category=task.category, reason=(err or "empty payload")[:200])
+            return
+        result = curate_lessons(existing, distilled, evidence=new_snippets)
+        self.memory.replace_lessons(task.category, result.entries)
+        self.memory.log_event("lessons_curated", task_id=task.task_id,
+                              category=task.category, added=len(result.added),
+                              merged=result.merged, dropped=len(result.dropped),
+                              total=len(result.entries))
+        self._emit("lessons_curated", task_id=task.task_id, category=task.category,
+                   added=[l["text"] for l in result.added], merged=result.merged,
+                   dropped=len(result.dropped))
+        if result.added:
+            report.improvements.append(
+                f"{task.category}: +{len(result.added)} curated lesson(s) "
+                f"({len(result.entries)} in KB)")
+
     def _seed_tree(self, task: Task, policy: Optional[Dict[str, float]]) -> DiscoveryTree:
         tree = DiscoveryTree()
         recipe = self.memory.get_recipe(task.category)
@@ -378,6 +469,7 @@ class AutoRSIRuntime:
         recipe: Optional[str],
         feedback: str,
         branch_code: Optional[str] = None,
+        lessons: str = "(none yet)",
     ) -> Optional[str]:
         temperature = float((policy or {}).get("temperature", 0.7))
         user = REFINE_USER_TEMPLATE.format(
@@ -387,6 +479,7 @@ class AutoRSIRuntime:
             recipe=recipe or "(none yet)",
             branch=branch_code or "(fresh branch — nothing tried here yet)",
             policy=json.dumps(policy or {}),
+            lessons=lessons,
             feedback=feedback or "(none)",
         )
         try:
