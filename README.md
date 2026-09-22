@@ -180,6 +180,22 @@ OpenAI server: `examples/live_loop_demo.py`.
 
 ---
 
+## 🔌 Plug into OpenCode / Goose / any MCP harness
+
+The loop speaks **MCP over stdio** — one config block in OpenCode or Goose
+and your everyday coding agent can queue tasks for the dreamer, pull back
+verified recipes and consult the curated lessons:
+
+```bash
+# OpenCode: add to opencode.json      Goose: add to ~/.config/goose/config.yaml
+python3 -m open_dream_rsi mcp --tasks ./tasks.json --memory ./.dream_rsi
+```
+
+Copy-paste instructions for both harnesses (plus Claude Code/Cursor/Zed):
+**[docs/integrations.md](docs/integrations.md)**.
+
+---
+
 ## 📊 Benchmark
 
 `bench` compares two arms on the same task suite and the same (scripted or real)
@@ -301,7 +317,8 @@ python -m open_dream_rsi loop --tasks tasks.json --no-knowledge         # ablate
 * `open_dream_rsi.loop`: `AutoRSIRuntime` — autonomous supervisor (schedule, budget, feedback loop).
 * `open_dream_rsi.memory`: `DreamMemory` — persistent policies, recipes, trees, event log.
 * `open_dream_rsi.tools`: `CodeVerifier` — sandboxed execution of candidate solutions.
-* `open_dream_rsi.cli`: `python -m open_dream_rsi loop|status|dashboard|bench` entry point.
+* `open_dream_rsi.cli`: `python -m open_dream_rsi loop|status|dashboard|bench|mcp` entry point.
+* `open_dream_rsi.mcp`: MCP stdio server — exposes the loop to OpenCode, Goose and any MCP harness.
 * `open_dream_rsi.bench`: two-arm API-efficiency benchmark (dreaming vs cold baseline).
 * `open_dream_rsi.llm`: OpenAI-compatible client (OpenAI, Cursor Models API, local servers).
 * `open_dream_rsi.utils.evaluator`: Scoring and ranking of policies over the recorded history.
