@@ -1,0 +1,403 @@
+\documentclass[11pt,a4paper]{article}
+
+% --- arXiv-style preprint layout -------------------------------------------
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{microtype}
+
+\hypersetup{colorlinks=true, linkcolor=blue!60!black, citecolor=blue!60!black, urlcolor=blue!60!black}
+\setlength{\parskip}{0.4em}
+\setlength{\parindent}{0pt}
+
+\newcommand{\hdr}[1]{\textbf{#1}}
+
+\title{\bfseries Open Dream-RSI: An Open-Source Library for Recursive
+Self-Improvement Around a Frozen LLM, with Replay-Gated Learned Policies and a
+Curated Knowledge Base}
+
+\author{%
+Patryk Orwat\\
+Independent Researcher\\
+\texttt{patrykorwat@gmail.com}\\[2pt]
+\small September 22, 2026
+}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We present \textbf{Open Dream-RSI}, an open-source (MIT) Python library that
+implements the exploration layer of recursive self-improvement (RSI) around a
+\emph{frozen} large language model: no weight access, no GPU, no training. The
+library reproduces the discovery loop of Dream-RSI \cite{dreamrsi} and extends
+it in three directions that the paper leaves implicit. First, an
+\emph{always-on supervisor} that self-schedules improvement cycles under an
+explicit API-call budget guard. Second, \emph{LLM-written exploration
+policies}: the loop asks the model to write candidate expansion policies as
+Python source, executes them in an isolated subprocess, scores them by
+\emph{counterfactual replay rollout} on the recorded discovery tree, and
+promotes them only on evidence. Third, a \emph{knowledge curator} that distils
+verifier failures into short, schema-validated, deduplicated lesson records
+retrieved into every future proposal---so iterations become not only cheaper
+but measurably smarter. We introduce two deterministic, key-free benchmarks:
+\texttt{bench}, which measures API-call savings (54\% at equal solve quality on
+the built-in suite), and \texttt{bench-policy}, a \emph{decoy-trap} suite that
+isolates exploration quality where solve-rate graphs saturate: score-greedy
+exploration solves \textbf{0/120} tasks, $\varepsilon$-greedy 24\%, while
+replay-gated learned policies reach \textbf{72\%} (100\% by cycle~5) at
+\emph{fewer} total calls than $\varepsilon$ spends on luck, and the curated
+knowledge base alone---with zero policy-generation calls---reproduces the same
+72\%. All headline numbers are produced by a scripted solver and are therefore
+claims about the \emph{machinery} (gates, sandboxes, promotion, retrieval),
+not about any particular model; we state this limitation explicitly.
+The package has zero runtime dependencies, $\sim$3.5k lines of library code,
+910 lines of tests (66 passing), a live dashboard, and a single CLI.
+\end{abstract}
+
+\vspace{0.5em}
+\hrule
+\vspace{0.3em}
+\small
+\textbf{Code:} \url{https://github.com/patrykorwat/open-dream-rsi} ---
+MIT license, Python $\geq$ 3.9, zero runtime dependencies, installable from
+source with no build step.
+\vspace{0.3em}
+\hrule
+\normalsize
+
+\section{Introduction}
+
+Recursive self-improvement systems that post-train model weights
+\cite{openrsi} require GPU clusters, training infrastructure, and
+weight access. The Dream-RSI line of work \cite{dreamrsi} shows a lighter
+recipe: keep the model frozen and instead improve the \emph{process around
+it}---an offline ``dreaming'' loop that optimises how the online agent
+exploits accumulated discovery history. Since the paper's release
+(2026-09-14) several independent implementations have appeared; Open
+Dream-RSI is one of them, not the first (see \S\ref{sec:related}).
+
+This library targets the gap between the paper's method sketch and a usable
+tool: a researcher with an OpenAI-compatible endpoint should be able to
+\texttt{pip}-install the loop, point it at their tasks and model, and get a
+self-improving search that is (a)~budget-safe, (b)~safe to run code the model
+writes, and (c)~capable of getting \emph{better}, not merely cheaper. We make
+three contributions beyond the published method description:
+
+\begin{enumerate}
+  \item \hdr{Always-on supervisor with a hard budget guard.}
+  \texttt{AutoRSIRuntime} self-schedules cycles, counts every API call
+  (including offline dreaming), and refuses to overspend---the property any
+  unattended deployment needs and no reference implementation ships.
+  \item \hdr{LLM-written exploration policies with replay-gated promotion.}
+  Per task category, the loop asks the frozen model for a policy program
+  (\texttt{choose\_action(frontier, step)}), statically validates it, executes
+  it in a scrubbed subprocess, scores it against the recorded discovery tree
+  by counterfactual rollout, and promotes it only if it beats the incumbent on
+  evidence (\S\ref{sec:policy}). Promotion, not trust, is the safety model.
+  \item \hdr{Knowledge curator: lessons that make iterations smarter.}
+  Recipes and policies capture \emph{what} worked; nothing captured \emph{why}
+  attempts failed, so a trap re-pays its tuition every run. The curator
+  distils verifier failures into short validated lesson records, retrieves
+  them into future proposals, and prunes those that stop helping
+  (\S\ref{sec:curator})---the skills/memory pattern of practical agent
+  frameworks, applied to the loop itself.
+\end{enumerate}
+
+Two deterministic, key-free benchmarks back the claims (\S\ref{sec:bench}):
+\texttt{bench} measures cost; \texttt{bench-policy} measures exploration on a
+purpose-built decoy-trap suite, because on easy suites every strategy solves
+everything and solve-rate graphs are blind to policy quality.
+
+\section{System architecture}
+
+The package is $\sim$3.5k lines of pure-Python with no runtime dependencies
+(standard library only, including the LLM client) and 910 lines of tests.
+Modules:
+
+\begin{itemize}
+  \item \texttt{core.tree} --- discovery tree: hypothesis, verifier score,
+  action history per node.
+  \item \texttt{core.agent} --- thin LLM-agent abstraction steered by the
+  currently promoted policy.
+  \item \texttt{core.simulator} / \texttt{core.dreamer} --- offline dreaming:
+  replay and optimisation over recorded simulations without touching the
+  online budget.
+  \item \texttt{core.policygen} --- policy generation, validation, sandboxed
+  execution, counterfactual rollout scoring, promotion gate
+  (\S\ref{sec:policy}).
+  \item \texttt{core.curator} --- lesson distillation, validation, retrieval,
+  pruning (\S\ref{sec:curator}).
+  \item \texttt{memory} --- persistent cross-run store: verified-solution
+  recipes, promoted policies, \texttt{lessons.json}.
+  \item \texttt{loop} --- \texttt{AutoRSIRuntime}: scheduling, budget guard,
+  feedback wiring between dreaming and online expansion.
+  \item \texttt{llm} --- OpenAI-compatible client
+  (\texttt{POST \{base\_url\}/chat/completions}) via \texttt{urllib}; works
+  against OpenAI, vLLM, Ollama, LM Studio, or any protocol-compatible server
+  through \texttt{OPENAI\_BASE\_URL}.
+  \item \texttt{tools} --- sandboxed code verification (same isolation
+  boundary as the policy sandbox).
+  \item \texttt{dashboard} --- dependency-free live web dashboard.
+\end{itemize}
+
+\hdr{Budget guard.} Every call---online proposals, offline dreaming, policy
+generation, curation---increments a single counter checked before dispatch.
+A cycle halts at its budget rather than overspending; the supervisor can then
+sleep, re-plan, and resume from persisted memory. This is what makes the loop
+deployable unattended: the cost per cycle is a declared quantity, not a hope.
+
+\hdr{Sandbox boundary.} Candidate policy code and model-generated solutions
+are never executed in-process. Execution happens in
+\texttt{python~-I} subprocesses with a scrubbed environment (only
+\texttt{PATH}), a hard timeout (5\,s per decision), and a temp-dir harness.
+Invalid code is additionally rejected by AST-level static validation (shape:
+\texttt{def choose\_action(frontier, step)}; no imports, no dunder access)
+before any process spawns. API keys never cross the sandbox wall.
+
+\section{LLM-written exploration policies}
+\label{sec:policy}
+
+For each task category the loop may request one LLM call producing a complete
+policy program. The candidate then passes a pipeline in which every stage can
+reject it:
+
+\begin{enumerate}
+  \item \hdr{Static validation.} AST parse; required entry point present;
+  banned constructs (imports, \texttt{eval}, dunder access) reject outright.
+  \item \hdr{Sandboxed execution} against recorded frontiers (above).
+  \item \hdr{Counterfactual rollout scoring.} The candidate's decisions are
+  replayed on the recorded discovery tree: at each simulated step the
+  candidate picks a frontier node; the reward is the score the child actually
+  achieved in the recorded ladder (back-propagated outcome for
+  never-expanded nodes). One batched subprocess scores an entire rollout
+  ($\sim$15$\times$ faster than per-step spawning). The objective is
+  \begin{equation}
+    \text{score}(\pi) \;=\; \frac{1}{T}\sum_{t=1}^{T} r_t
+    \;+\; \beta_2 \cdot \frac{|\{\text{distinct picks}\}|}{T},
+    \qquad \beta_2 = 0.2,
+  \end{equation}
+  applied \emph{identically} to the candidate and to an in-process greedy
+  baseline. Mean-only scoring mis-ranks explorers below greedy on trap trees;
+  the diversity term is what lets a genuinely structural explorer win the
+  gate.
+  \item \hdr{Promotion gate.} A candidate replaces the incumbent only with
+  evidence: $\geq$80\% valid sandbox decisions (\texttt{MIN\_VALIDITY}=0.8)
+  over a horizon of $\geq$8 recorded steps (\texttt{MIN\_HORIZON}), and a
+  rollout score beating the greedy baseline under the shared objective.
+  \item \hdr{Call economy.} A category that already solves with its promoted
+  policy is not re-asked; regeneration requires 4 new replay steps of
+  evidence (\texttt{POLICY\_REGROW\_STEPS}), and all generation calls count
+  against the same budget guard.
+\end{enumerate}
+
+The promoted program then \emph{steers online expansion}: which frontier node
+to expand next is decided by validated model-written code rather than a fixed
+heuristic. This closes the loop the paper describes---the process around the
+model improves---while every untrusted artefact (code and text alike) passes a
+structural gate.
+
+\section{The knowledge curator}
+\label{sec:curator}
+
+Recipes (verified solutions as warm starts) and policies capture \emph{what}
+worked. Neither captures \emph{why} attempts fail, so the same trap re-buys
+its tuition fee every run. The curator adds a third persistent artefact.
+
+\hdr{Lesson records.} After failed verification, the loop invokes the model
+once (one call, budget-counted) to distil the verifier evidence into lessons
+carrying a short trigger phrase, a lesson text of $\leq$280 characters, and
+$\leq$5 evidence snippets.
+
+Lessons are \emph{pure text}---never executed---so their gate is structural
+plus evidential rather than sandboxed: schema and caps (2--4 trigger words;
+20--280 characters; $\leq$8 lessons per category; $\leq$4 lessons / 700
+characters injected per prompt; $\leq$5 evidence snippets each), evidence
+required at admission, and deduplication against the existing store.
+
+\hdr{Retrieval feedback.} At proposal time the top lessons for the category
+are retrieved (trigger-match, ranked by \texttt{wins}/\texttt{uses} counters
+updated from subsequent verification outcomes); counters drive ranking and
+eviction, so lessons that demonstrably stop helping are pruned automatically.
+The knowledge base therefore cannot silently grow stale, and its worst
+failure mode---injecting an unhelpful paragraph---is bounded by the caps.
+
+\hdr{What is claimed and what is not.} The benchmark below demonstrates that
+the \emph{wiring} works: a lesson, once admitted, causally changes what the
+proposal prompt contains and the scripted world responds to it. The quality
+of lesson \emph{writing} by a live model is an open question this library
+deliberately does not claim to have settled (\S\ref{sec:limits}).
+
+\section{Benchmarks}
+\label{sec:bench}
+
+Both benchmarks are deterministic and key-free: a scripted solver makes the
+model arm a constant, so every delta is attributable to the library's
+machinery. They are reproducible from a fresh clone in seconds:
+
+\begin{verbatim}
+python -m open_dream_rsi bench --cycles 10 --markdown
+python -m open_dream_rsi bench-policy --cycles 8 --format md
+\end{verbatim}
+
+\subsection{Cost: the dreaming loop against a cold baseline}
+
+\texttt{bench} runs the built-in suite (10 cycles $\times$ 5 tasks) twice:
+a cold baseline (fresh memory each cycle) and the full loop (dreaming +
+persistent recipes and policies), same scripted model. Measured at the
+defaults:
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrr}
+\toprule
+arm & solves & API calls & calls / task$\cdot$cycle \\
+\midrule
+cold baseline (fresh memory each cycle) & 50 & 150 & 3.00 \\
+dream loop (policies + recipes + dreaming) & 50 & 69 & 1.38 \\
+\bottomrule
+\end{tabular}
+\caption{\texttt{bench}: 54.0\% API-call saving at equal solve quality
+(3{,}000 dreaming iterations run offline; wall-clock 1.6\,s). The curator is
+disabled in this benchmark to keep the cost measurement pure.}
+\end{table}
+
+\subsection{Exploration: the decoy-trap suite}
+
+Solve-rate graphs cannot show that a learned policy helps, because easy
+suites saturate every arm. \texttt{bench-policy} constructs 5 tasks whose fix
+hides behind a \emph{low-scoring} branch (passes 1/3 tests) past a plausible
+\emph{decoy} that passes 2/3 forever; family scores are fixed by construction
+and asserted by tests. Score-greedy expansion locks onto the decoy
+permanently; escaping requires either structural exploration or memory.
+Four arms share one scripted solver and budget and differ only in machinery
+(3 runs $\times$ 8 cycles $\times$ 5 tasks, 24 calls/cycle):
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrrrr}
+\toprule
+arm & solves & rate & calls & calls/solve & gen.\ calls \\
+\midrule
+greedy & 0/120 & 0\% & 480 & $\infty$ & 0 \\
+$\varepsilon$-greedy ($\varepsilon{=}0.3$) & 29/120 & 24\% & 405 & 13.97 & 0 \\
+replay-gated policies & \textbf{86/120} & \textbf{72\%} & \textbf{274} & \textbf{3.19} & 33 policy \\
+curated knowledge base & \textbf{87/120} & \textbf{72\%} & 283 & 3.25 & 40 curator \\
+\bottomrule
+\end{tabular}
+\caption{\texttt{bench-policy}: the knowledge arm is
+$\varepsilon$-greedy \emph{with zero policy calls}---every escape above the
+$\varepsilon$ baseline is attributable to remembered lessons. Policies and
+knowledge reach the same plateau (100\% by cycle~5 and~8 respectively);
+neither is ranked over the other, and 87 vs.\ 86 is noise.}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{odr_policy_bench.png}
+\caption{Per-cycle solve rate on the decoy-trap suite (mean over 3 seeds).
+Greedy never escapes the decoy; $\varepsilon$-greedy escapes by luck;
+replay-gated policies and the curated knowledge base both saturate at 100\%.}
+\end{figure}
+
+\hdr{Seed robustness.} The shipped seeds (7,\,11,\,23) are not cherry-picked:
+over five independent seed sets the two knowledge/policy arms land within
+78--88 and 78--87 solves of 120 respectively---statistically
+indistinguishable from each other---while $\varepsilon$-greedy stays at
+21--32. The dominance over $\varepsilon$ (roughly 3$\times$ the solves at
+$\sim$70\% of its calls, 3.2 vs.\ 14 calls per solve) holds on every set.
+
+\subsection{Test suite}
+
+66 tests pass (910 LOC), including the benchmark's behavioural contracts:
+trap-family scores equal their constructed values; the greedy arm must solve
+nothing; the gated-policy arm must dominate $\varepsilon$; curator schema,
+caps, dedup, and prune logic are pinned by unit tests.
+
+\section{Related work and positioning}
+\label{sec:related}
+
+\cite{dreamrsi} (Dream-RSI: Recursive Self-Improvement through Evolving
+Worlds; Zheng et al., Google/DeepMind/UMD, arXiv:2609.14858) is the method
+this library implements; the official repository is
+\url{https://github.com/zhengkid/Dream-RSI}. Independent implementations
+include a model-agnostic adapter SDK with strict replay and evidence-based
+promotion gates \cite{drsdk}, a local-Qwen CUDA-kernel exploration on DGX
+Spark \cite{dspark}, and agent/skill variants \cite{hermesdrsi}. Against
+peers, this library differentiates on: the always-on budget-guarded
+supervisor; LLM-\emph{written} policy code (as opposed to a fixed policy
+menu) with counterfactual-replay promotion; a dedicated exploration benchmark
+(\texttt{bench-policy}); a curated lesson knowledge base with retrieval
+feedback; persistent cross-run memory; a live dashboard; zero dependencies;
+MIT license.
+
+A different layer of the same problem is filled by OpenRSI/OpenMLE/Frontis-MA1
+\cite{openrsi}, which post-train weights (SFT+RL, a 35B meta-evolution agent
+on MLE-Bench); the two are complementary---their trained improver could be the
+frozen model behind our client, our dreaming loop could sit on top of their
+search.
+
+\section{Limitations}
+\label{sec:limits}
+
+We state plainly what the numbers do and do not show.
+\begin{enumerate}
+  \item \hdr{Scripted worlds, not model quality.} Every headline number comes
+  from deterministic benchmarks with a scripted solver; the trap scores are
+  fixed by construction, the scripted solver treats a stored lesson text as a
+  genuine insight when it is visible in the prompt, and the ``policy''
+  returned by the scripted model is a canned program. The benchmarks
+  therefore validate the \emph{machinery}---sandboxes, gates, promotion,
+  retrieval, budget---and prove the arms differ \emph{causally} through
+  memory, not that any live model writes good lessons or policies. Live-model
+  evaluation is the required next experiment.
+  \item \hdr{Benchmark self-design risk.} The decoy-trap suite was designed by
+  the same author as the loop it measures. Mitigations: family scores fixed
+  and asserted by construction; arm contracts enforced by tests (greedy must
+  fail, arms must differ causally); determinism lets anyone re-measure with
+  one command; five seed sets reported.
+  \item \hdr{Single-node sandbox.} \texttt{python -I} with scrubbed environment
+  and timeout is a real boundary against casual escape but is not a container;
+  deployments with hostile task sources should add OS-level isolation.
+  \item \hdr{Scope.} No weight updates, no multi-agent dynamics, no adversarial
+  red-teaming of promoted policies; the knowledge base is per-category text,
+  not a structured world model.
+\end{enumerate}
+
+\section{Conclusion}
+
+Open Dream-RSI turns the Dream-RSI method into a deployable, budget-safe,
+dependency-free library and adds the two mechanisms a running loop actually
+needs to compound---evidence-gated learned policies and a curated,
+self-pruning knowledge base---each backed by a deterministic benchmark that
+isolates exactly the capability it claims. At library scale: 54\% fewer API
+calls at equal solve quality; on a suite where greedy exploration solves
+nothing, replay-gated policies and remembered knowledge both reach 72\%
+cumulative (100\% by cycle~5--8) at $\sim$4$\times$ better cost-per-solve
+than random escape. All artefacts pass structural gates before touching the
+loop; the gate, not trust, decides.
+
+
+\begin{thebibliography}{9}
+\bibitem{dreamrsi} Zheng et al., \emph{Dream-RSI: Recursive
+Self-Improvement through Evolving Worlds}, arXiv:2609.14858, 2026.
+\bibitem{openrsi} FrontisAI, \emph{OpenRSI / OpenMLE / Frontis-MA1},
+\url{https://github.com/FrontisAI/OpenRSI}.
+\bibitem{drsdk} TheAstrayDev, \emph{dream-rsi-sdk},
+\url{https://github.com/TheAstrayDev/dream-rsi-sdk}.
+\bibitem{dspark} robinber, \emph{dream-rsi-spark},
+\url{https://github.com/robinber/dream-rsi-spark}.
+\bibitem{hermesdrsi} lesterppo, \emph{hermes-dream-rsi},
+\url{https://github.com/lesterppo/hermes-dream-rsi}; Harkit2004,
+\dots \emph{dream-rsi-skill}; mailbobg, \emph{Pi-RSI}.
+\end{thebibliography}
+
+\end{document}

@@ -7,3 +7,6 @@ dist/
 .dream_rsi_dashboard*/
 .pytest_cache/
 .venv/
+paper/main.aux
+paper/main.log
+paper/main.out
