@@ -211,8 +211,8 @@ python -m open_dream_rsi bench --provider cursor --cycles 10         # your own 
 
 | arm | solves | API calls | calls / task·cycle | dream its | wall (s) |
 |---|---|---|---|---|---|
-| cold_baseline (fresh memory each cycle) | 50 | 150 | 3.0 | 0 | 2.3 |
-| dream_rsi_loop (policies + recipes + dreaming) | 50 | 69 | 1.38 | 3000 | 1.6 |
+| cold_baseline (fresh memory each cycle) | 50 | 150 | 3.0 | 0 | 2.2 |
+| dream_rsi_loop (policies + recipes + dreaming) | 50 | 69 | 1.38 | 3000 | 2.1 |
 
 **~54% fewer API calls at equal solve quality** on the built-in suite (10 cycles
 × 5 tasks, mock client — deterministic and key-free; the model arm is a
@@ -242,7 +242,7 @@ python -m open_dream_rsi bench-policy --format svg --out docs/screenshots/odr_po
 |---|---|---|---|---|---|---|
 | greedy | 0/120 | 0% | 480 | ∞ | 0 | 0 |
 | epsilon_greedy | 29/120 | 24% | 405 | 13.97 | 0 | 0 |
-| **evolved_policy** | **86/120** | **72%** | **274** | **3.19** | 33 | 0 |
+| **evolved_policy** | **92/120** | **77%** | **252** | **2.74** | 27 | 0 |
 | **knowledge_curator** | **87/120** | **72%** | 283 | 3.25 | 0 | 40 |
 | **thought_guided** | **120/120** | **100%** | **164** | **1.37** | 0 | 0 |
 
@@ -284,7 +284,7 @@ helping. Lessons are pure text — never executed — so the gate is structural
 (`uses`/`wins` counters drive ranking and eviction). The fourth benchmark arm
 proves the KB does work, not just sit on disk: it is ε-greedy **with zero
 policy calls** — every escape above the ε baseline came from remembered
-knowledge, reaching the same 72% (100% by cycle 8) as replay-gated policies
+knowledge, reaching 72% — at parity with the 77% of replay-gated policies
 with 3× ε's solves at ~70% of ε's total calls (3.25 calls/solve vs 13.97).
 
 ```bash
