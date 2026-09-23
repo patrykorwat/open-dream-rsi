@@ -194,6 +194,11 @@ verified recipes and consult the curated lessons:
 python3 -m open_dream_rsi mcp --tasks ./tasks.json --memory ./.dream_rsi
 ```
 
+Already inside goose and want the dreamer to dream with **goose's own model**
+(no second API key)? Pass `provider: "goose"` to `odr_run_once`, or run
+`python3 -m open_dream_rsi proxy` — a loopback OpenAI-compatible endpoint
+that forwards to the provider/model/credential in `~/.config/goose`.
+
 Copy-paste instructions for both harnesses (plus Claude Code/Cursor/Zed):
 **[docs/integrations.md](docs/integrations.md)**.
 

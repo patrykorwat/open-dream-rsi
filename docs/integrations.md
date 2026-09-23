@@ -107,10 +107,20 @@ extensions:
     enabled: true
     type: stdio
     name: open-dream-rsi
+    description: "Dream-RSI self-improvement loop. Use odr_add_task to queue a
+      Python task with tests, odr_run_once to run an improvement cycle,
+      odr_recipes/odr_lessons to reuse verified solutions and failure lessons,
+      odr_status to inspect what the loop has learned."
     cmd: python3
-    args: ["-m", "open_dream_rsi", "mcp", "--tasks", "./tasks.json", "--memory", "./.dream_rsi"]
+    args: ["-m", "open_dream_rsi", "mcp",
+           "--tasks", "/ABSOLUTE/PATH/projects/myproject/tasks.json",
+           "--memory", "/ABSOLUTE/PATH/projects/myproject/.dream_rsi"]
     timeout: 300
 ```
+
+Goose spawns extensions **without a shell and with a scrubbed environment**:
+use absolute paths (no `~`, no relative `./`) and pass any env the server
+needs via `envs:` — it will not inherit your export'ed `OPENAI_*`.
 
 One-shot alternative (no config edit), from the project directory::
 
@@ -121,7 +131,40 @@ Inside the session, ask e.g.:
 > "Ask the odr_status tool what the self-improvement loop has learned, then
 > run one cycle with odr_run_once if there are queued tasks."
 
-Approve the extension tools when Goose prompts for permission.
+Approve the extension tools when Goose prompts for permission. No LLM model
+will call these tools on its own initiative — the trigger must come from you,
+from recipe `instructions:`, or from a hook that surfaces them at the right
+moment.
+
+### Borrow goose's model (no second API key)
+
+Goose does not implement MCP sampling (`sampling/createMessage`), so an
+extension cannot ask the host for completions through the protocol. Two
+first-class ways to run the dreamer on **exactly the model goose uses**:
+
+1. **`provider: "goose"` (zero daemon).** Pass it to `odr_run_once` (or
+   `--provider goose` on `loop`): Open Dream-RSI reads
+   `~/.config/goose/config.yaml` (`GOOSE_PROVIDER` / `GOOSE_MODEL`),
+   `custom_providers/*.json` and `secrets.yaml` — including the macOS
+   keychain — and calls that same endpoint itself. The credential stays in
+   goose's storage; nothing is duplicated in the extension config.
+
+2. **`proxy` (plain OpenAI-compatible endpoint).** If you want anything
+   OpenAI-compatible pointed at goose's brain (not only ODR), start::
+
+       python3 -m open_dream_rsi proxy --port 8799
+
+   and set, in this extension's `envs:` or anywhere else::
+
+       OPENAI_BASE_URL: "http://127.0.0.1:8799/v1"
+       OPENAI_API_KEY: "pr..."        # proxy authenticates upstream itself
+
+   The proxy resolves the upstream **per request** (switching models in
+   goose takes effect live), pins outgoing calls to `GOOSE_MODEL`
+   (`--passthrough-models` opts out), speaks OpenAI and Anthropic upstreams,
+   binds to loopback only, and exposes `GET /health` (resolved upstream with
+   the key masked) and `GET /v1/models`. Check the resolution without
+   serving: `python3 -m open_dream_rsi proxy --print-config`.
 
 ## Any other MCP client (Claude Code, Cursor, Zed, …)
 
