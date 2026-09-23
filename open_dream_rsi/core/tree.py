@@ -10,6 +10,11 @@ class TreeNode:
     score: float
     parent_id: Optional[str] = None
     children: List[str] = field(default_factory=list)
+    #: One-sentence plan the model recorded when producing this attempt
+    #: ("why I try this"). Pure text — never executed — but it is what
+    #: turns branch selection from purely numeric (score) into semantic:
+    #: policies and future proposals can see WHICH IDEA a branch stands for.
+    thought: str = ""
 
 
 class DiscoveryTree:
@@ -19,8 +24,10 @@ class DiscoveryTree:
         self.nodes: Dict[str, TreeNode] = {}
         self.root_id: Optional[str] = None
 
-    def add_node(self, node_id: str, action: str, result: Any, score: float, parent_id: Optional[str] = None) -> TreeNode:
-        node = TreeNode(node_id=node_id, action=action, result=result, score=score, parent_id=parent_id)
+    def add_node(self, node_id: str, action: str, result: Any, score: float, parent_id: Optional[str] = None,
+                 thought: str = "") -> TreeNode:
+        node = TreeNode(node_id=node_id, action=action, result=result, score=score, parent_id=parent_id,
+                        thought=thought or "")
         self.nodes[node_id] = node
 
         if parent_id and parent_id in self.nodes:

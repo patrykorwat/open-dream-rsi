@@ -67,11 +67,14 @@ POLICY_CONTRACT = (
     "        ...\n"
     "frontier is a list of dicts: {'node_id': str, 'action': str, "
     "'score': float, 'parent_id': str|None, 'children': int, "
-    "'outcome': float, 'errors': list[str]}. Return the node_id (str) of the "
-    "node to expand next. 'score' is what the verifier gave that node's own "
-    "attempt; 'children' is how often it was expanded so far; 'outcome' is "
-    "the best score found anywhere below it (equal to its score when "
-    "unexplored); 'errors' lists which tests still fail on it. Beware DECOY "
+    "'outcome': float, 'errors': list[str], 'thought': str}. Return the "
+    "node_id (str) of the node to expand next. 'score' is what the verifier "
+    "gave that node's own attempt; 'children' is how often it was expanded "
+    "so far; 'outcome' is the best score found anywhere below it (equal to "
+    "its score when unexplored); 'errors' lists which tests still fail on "
+    "it; 'thought' is the model's one-line plan for that attempt (may be "
+    "empty) — nodes sharing idea words belong to the same idea family. "
+    "Beware DECOY "
     "TRAPS: a high-score leaf whose errors never change is plausible code "
     "that will fail hidden tests forever — re-expanding it burns the budget, "
     "while branches with different (or no) failures hide the real prize. "
@@ -352,6 +355,7 @@ def frontier_entry(node: Any, outcomes: Dict[str, float]) -> Dict[str, Any]:
         "children": len(node.children),
         "outcome": outcomes.get(node.node_id, node.score),
         "errors": [str(e)[:160] for e in errors[:3]],
+        "thought": str(getattr(node, "thought", "") or "")[:160],
     }
 
 
@@ -605,6 +609,8 @@ class PolicyGenerator:
         for node in list(tree.nodes.values())[-max_nodes:]:
             errs = (node.result or {}).get("errors") or []
             errs_txt = (" errors=" + "; ".join(str(e)[:40] for e in errs[:2])) if errs else ""
+            thought = str(getattr(node, "thought", "") or "")[:60]
+            thought_txt = f"  thought='{thought}'" if thought else ""
             lines.append(f"  {node.node_id}  action={node.action}  "
-                         f"score={node.score:.3f}  children={len(node.children)}{errs_txt}")
+                         f"score={node.score:.3f}  children={len(node.children)}{errs_txt}{thought_txt}")
         return "\n".join(lines) or "(empty)"

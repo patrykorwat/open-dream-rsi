@@ -40,6 +40,7 @@ def cmd_loop(args: argparse.Namespace) -> int:
         max_tokens=args.max_tokens,
         enable_policy_code=not args.no_policy_code,
         enable_knowledge=not args.no_knowledge,
+        enable_thoughts=getattr(args, "thoughts", False),
     )
     if args.once:
         report = runtime.run_once()
@@ -96,6 +97,9 @@ def main(argv: list[str] | None = None) -> int:
                       help="disable LLM-written exploration policies (section-3 step)")
     loop.add_argument("--no-knowledge", action="store_true",
                       help="disable the knowledge curator (lessons.json KB, section-4 step)")
+    loop.add_argument("--thoughts", action="store_true",
+                      help="record one-line PLAN per attempt and steer expansion by "
+                           "idea stagnation (semantic branching; off by default)")
     loop.add_argument("--interval", type=float, default=300.0, help="seconds between cycles")
     loop.add_argument("--cycles", type=int, default=None, help="stop after N cycles")
     loop.add_argument("--once", action="store_true", help="single cycle (for cron)")

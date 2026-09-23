@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "open-dream-rsi"
-version = "0.1.0"
+version = "0.2.0"
 description = "Open-source implementation of the Dream-RSI (Recursive Self-Improvement through Evolving Worlds) architecture."
 readme = "README.md"
 requires-python = ">=3.10"

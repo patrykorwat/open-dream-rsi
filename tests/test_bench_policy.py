@@ -122,6 +122,98 @@ class ArmsTest(unittest.TestCase):
         self.assertEqual(pol.mean_solve_rate_by_cycle,
                          sorted(pol.mean_solve_rate_by_cycle))
 
+    def test_thought_guided_arm_deterministically_escapes_the_trap(self):
+        """The thought arm must win WITHOUT luck, policy code, or lessons.
+
+        Causal attribution (three parts): (1) with explore_epsilon forced to
+        0 it still escapes every trap from cycle 1 — no random exploration,
+        no sandboxed policy programs, no curated KB (all disabled); (2) the
+        ledger WITHOUT the semantic expansion pick is indistinguishable from
+        the plain baselines — the win is attributable to the loop's
+        stagnation-triggered steering, not to prompt text alone; (3) fixes
+        grow only from expanding the promising-idea node (legit ladder),
+        never from a solver-side shortcut to the fix.
+        """
+        slots = self.CYCLES * len(TRAP_SUITES) * len(self.SEEDS)
+        th = run_policy_arm("thought_guided", ARMS["thought_guided"],
+                            self.CYCLES, self.BUDGET, seeds=self.SEEDS)
+        eps = run_policy_arm("epsilon_greedy", ARMS["epsilon_greedy"],
+                             self.CYCLES, self.BUDGET, seeds=self.SEEDS)
+        self.assertGreater(th.solves_total, eps.solves_total)
+        self.assertLess(th.api_calls_total, eps.api_calls_total)
+        self.assertEqual(th.policy_calls, 0)              # no section-3 calls
+        self.assertEqual(th.curator_calls, 0)             # no section-4 calls
+        self.assertEqual(th.mean_solve_rate_by_cycle[0], 100.0)  # from cycle 1
+        # (1) luck-free: zero epsilon, still perfect
+        pure = dict(ARMS["thought_guided"], explore_epsilon=0.0)
+        det = run_policy_arm("thought_guided_zero_eps", pure,
+                             self.CYCLES, self.BUDGET, seeds=self.SEEDS)
+        self.assertEqual(det.solves_total, slots)
+        self.assertEqual(det.mean_solve_rate_by_cycle[0], 100.0)
+        # (2) ablation: ledger without steering must NOT beat the baselines
+        led = dict(ARMS["thought_guided"], thought_steering=False,
+                   explore_epsilon=0.0)
+        ledger_only = run_policy_arm("ledger_only", led,
+                                     self.CYCLES, self.BUDGET, seeds=self.SEEDS)
+        self.assertEqual(ledger_only.solves_total, 0)     # == greedy
+        led2 = dict(ARMS["thought_guided"], thought_steering=False)
+        ledger_eps = run_policy_arm("ledger_eps", led2,
+                                    self.CYCLES, self.BUDGET, seeds=self.SEEDS)
+        self.assertEqual(ledger_eps.solves_total, eps.solves_total)
+
+    def test_fix_grows_from_promising_node_only(self):
+        """(3) No solver-side shortcut: every fix node's parent must carry
+        the promising idea — never the seed, never the ledger redirect."""
+        import tempfile as _tf
+        from open_dream_rsi.loop import AutoRSIRuntime, Task
+        from open_dream_rsi.memory import DreamMemory as _DM
+        from open_dream_rsi.bench_policy import IDEA_PHRASES
+
+        for suite in TRAP_SUITES:
+            with self.subTest(category=suite.category):
+                task = Task(task_id=f"{suite.category}_t", category=suite.category,
+                            prompt=suite.prompt, tests=list(suite.tests), max_attempts=4)
+                mem = _DM(_tf.mkdtemp())
+                rt = AutoRSIRuntime(client=TrapSolver(), memory=mem, tasks=[task],
+                                    api_call_budget=12, dream_iterations=5,
+                                    rng_seed=999, enable_policy_code=False,
+                                    enable_knowledge=False, explore_epsilon=0.0,
+                                    enable_thoughts=True)
+                rep = rt.run_once()
+                self.assertEqual(rep.tasks_solved, 1)
+                tree = mem.load_tree(f"{suite.category}_t")
+                self.assertIsNotNone(tree)
+                fixes = [n for n in tree.nodes.values() if n.score == 1.0]
+                self.assertTrue(fixes)
+                for f in fixes:
+                    parent = tree.nodes.get(f.parent_id)
+                    self.assertIsNotNone(parent)
+                    self.assertEqual((parent.thought or "").strip(),
+                                     IDEA_PHRASES["promising"])
+
+    def test_thoughts_persist_in_archived_tree(self):
+        """TreeNode.thought round-trips through memory (trees/) — the
+        replay world and future cycles see the same idea labels."""
+        import tempfile as _tf
+        from open_dream_rsi.loop import AutoRSIRuntime, Task
+        from open_dream_rsi.memory import DreamMemory as _DM
+
+        s = TRAP_SUITES[0]
+        task = Task(task_id="dedupe_t", category=s.category, prompt=s.prompt,
+                    tests=list(s.tests), max_attempts=4)
+        mem = _DM(_tf.mkdtemp())
+        rt = AutoRSIRuntime(client=TrapSolver(), memory=mem, tasks=[task],
+                            api_call_budget=24, dream_iterations=10, rng_seed=700,
+                            enable_policy_code=False, enable_knowledge=False,
+                            explore_epsilon=0.0, enable_thoughts=True)
+        rt.run_once()
+        tree = mem.load_tree("dedupe_t")
+        self.assertIsNotNone(tree)
+        labelled = [n for n in tree.nodes.values() if n.thought]
+        self.assertTrue(labelled, "no PLAN line reached the archived tree")
+        self.assertTrue(all("```" not in n.thought for n in labelled),
+                        "thought leaked code into the ledger")
+
     def test_svg_renders_with_three_arms(self):
         from open_dream_rsi.bench_policy import run_policy_benchmark
         s = run_policy_benchmark(cycles=2, budget=24, seeds=(7,))

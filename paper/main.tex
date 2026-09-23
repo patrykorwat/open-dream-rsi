@@ -48,19 +48,25 @@ Python source, executes them in an isolated subprocess, scores them by
 promotes them only on evidence. Third, a \emph{knowledge curator} that distils
 verifier failures into short, schema-validated, deduplicated lesson records
 retrieved into every future proposal---so iterations become not only cheaper
-but measurably smarter. We introduce two deterministic, key-free benchmarks:
+but measurably smarter. Fourth, \emph{thought-conditioned branching}: each
+attempt records the one-line plan the model stated before its code, the
+proposal prompt carries the task's tried-idea ledger, and expansion leaves a
+branch as soon as its recorded idea repeats itself---semantic selection
+replacing purely numeric score-greedy choice. We introduce two deterministic,
+key-free benchmarks:
 \texttt{bench}, which measures API-call savings (54\% at equal solve quality on
 the built-in suite), and \texttt{bench-policy}, a \emph{decoy-trap} suite that
 isolates exploration quality where solve-rate graphs saturate: score-greedy
-exploration solves \textbf{0/120} tasks, $\varepsilon$-greedy 24\%, while
-replay-gated learned policies reach \textbf{72\%} (100\% by cycle~5) at
-\emph{fewer} total calls than $\varepsilon$ spends on luck, and the curated
+exploration solves \textbf{0/120} tasks, $\varepsilon$-greedy 24\%, replay-gated
+learned policies reach \textbf{72\%} (100\% by cycle~5) at \emph{fewer} total
+calls than $\varepsilon$ spends on luck, the curated
 knowledge base alone---with zero policy-generation calls---reproduces the same
-72\%. All headline numbers are produced by a scripted solver and are therefore
+72\%, and thought-guided branching reaches \textbf{100\% from the first cycle}
+at 1.37 calls per solve even with exploration randomness disabled. All headline numbers are produced by a scripted solver and are therefore
 claims about the \emph{machinery} (gates, sandboxes, promotion, retrieval),
 not about any particular model; we state this limitation explicitly.
-The package has zero runtime dependencies, $\sim$3.5k lines of library code,
-910 lines of tests (66 passing), a live dashboard, and a single CLI.
+The package has zero runtime dependencies, $\sim$4k lines of library code,
+1.1k lines of tests (81 passing), a live dashboard, and a single CLI.
 \end{abstract}
 
 \vspace{0.5em}
@@ -236,6 +242,56 @@ proposal prompt contains and the scripted world responds to it. The quality
 of lesson \emph{writing} by a live model is an open question this library
 deliberately does not claim to have settled (\S\ref{sec:limits}).
 
+\section{Thought-conditioned branching}
+\label{sec:thoughts}
+
+Policies (section~\ref{sec:policy}) select branches by recorded scalars only:
+the frontier observation carries scores, visit counts and error strings, but
+nothing about \emph{which idea} a node stands for. A loop can therefore
+re-expand a branch forever without knowing it is re-polishing the same dead
+plan, and a proposal cannot see which ideas the branch already exhausted.
+Thought-conditioned branching (\texttt{enable\_thoughts}) closes this gap
+with two cheap, purely textual additions.
+
+\hdr{Per-node idea label.} When enabled, the candidate system prompt asks the
+model for exactly one \texttt{PLAN:} line before the code block; the line is
+extracted tolerantly and stored as \texttt{TreeNode.thought} (truncated at
+240 characters). Like lessons, thoughts are pure text---never executed---and
+are persisted with the archived tree, so replay worlds and later cycles see
+the same labels. The frontier entry and the policy-generation summary gain a
+\texttt{thought} field, letting LLM-written policies reason over idea
+families, not just scores.
+
+\hdr{Tried-idea ledger.} Every proposal prompt additionally carries the
+task's deduplicated idea ledger (best recorded outcome per distinct idea,
+$\leq$8 lines): which plans have already been tried in this task and what
+the verifier said about each. The model is instructed not to repeat a dead
+idea verbatim and to build on structurally promising ones.
+
+\hdr{Semantic escape from idea stagnation.} At expansion time, if the
+score-greedy choice is a node whose recorded children carry the \emph{same}
+one-line idea as the node itself---evidence of polishing a dead plan rather
+than converging---the loop deterministically expands the best-outcome node
+outside that idea family instead. No randomness, no API call, no scores
+improving: the trigger is recorded semantic evidence. When nothing is
+stagnant (or ideas are absent), the normal policy/epsilon/greedy cascade
+decides, so the feature strictly refines, never overrides, the existing
+machinery.
+
+\hdr{Causal attribution.} The decoy-trap benchmark's fifth arm
+(\S\ref{sec:bench}) isolates the contribution to the \emph{expansion-time
+steering}, not to the prompt text: with $\varepsilon$ forced to zero and
+both policy generation and curation disabled the arm escapes every trap
+from the first cycle, while the \texttt{thought\_steering=False} ablation
+(PLAN lines still recorded and the ledger still rendered into proposals,
+semantic pick disabled) collapses to the baselines---0/120 under greedy
+expansion, identical to $\varepsilon$-greedy's 29/120 with $\varepsilon$ on.
+The scripted solver is deliberately no more generous to the thought arm than
+to the lesson arm: the ledger may redirect a repeatedly-polished dead idea
+to the alternative idea, never directly to the fix, and tests assert that
+every solved task's fix node grows from expanding the promising-idea node---
+the same ladder every other arm must climb.
+
 \section{Benchmarks}
 \label{sec:bench}
 
@@ -291,13 +347,17 @@ greedy & 0/120 & 0\% & 480 & $\infty$ & 0 \\
 $\varepsilon$-greedy ($\varepsilon{=}0.3$) & 29/120 & 24\% & 405 & 13.97 & 0 \\
 replay-gated policies & \textbf{86/120} & \textbf{72\%} & \textbf{274} & \textbf{3.19} & 33 policy \\
 curated knowledge base & \textbf{87/120} & \textbf{72\%} & 283 & 3.25 & 40 curator \\
+thought-guided branching & \textbf{120/120} & \textbf{100\%} & \textbf{164} & \textbf{1.37} & 0 \\
 \bottomrule
 \end{tabular}
 \caption{\texttt{bench-policy}: the knowledge arm is
 $\varepsilon$-greedy \emph{with zero policy calls}---every escape above the
 $\varepsilon$ baseline is attributable to remembered lessons. Policies and
 knowledge reach the same plateau (100\% by cycle~5 and~8 respectively);
-neither is ranked over the other, and 87 vs.\ 86 is noise.}
+neither is ranked over the other, and 87 vs.\ 86 is noise. The thought arm
+additionally passes the \texttt{thought\_steering=False} ablation: with the
+semantic expansion pick disabled it falls back to 0/120 (greedy) and 29/120
+($\varepsilon$), pinning its win to expansion-time steering (\S\ref{sec:thoughts}).}
 \end{table}
 
 \begin{figure}[h]
@@ -314,6 +374,9 @@ over five independent seed sets the two knowledge/policy arms land within
 indistinguishable from each other---while $\varepsilon$-greedy stays at
 21--32. The dominance over $\varepsilon$ (roughly 3$\times$ the solves at
 $\sim$70\% of its calls, 3.2 vs.\ 14 calls per solve) holds on every set.
+The thought arm reaches 119--120 of 120 on the three-run sets and 159/160
+and 200/200 on the four- and five-run sets---its per-set rate never drops
+below 99\% and stays above the other machinery arms on every set.
 
 \subsection{Test suite}
 
