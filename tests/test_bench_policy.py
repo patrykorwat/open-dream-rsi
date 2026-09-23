@@ -221,6 +221,11 @@ class ArmsTest(unittest.TestCase):
         self.assertTrue(svg.startswith("<svg"))
         for arm in ARMS:
             self.assertIn(arm, svg)
+        light = to_svg(s, theme="light")
+        self.assertIn('fill="#ffffff"', light)        # print/paper palette
+        self.assertNotIn('#0d1117', light)            # no dark background
+        for arm in ARMS:
+            self.assertIn(arm, light)
 
 
 if __name__ == "__main__":

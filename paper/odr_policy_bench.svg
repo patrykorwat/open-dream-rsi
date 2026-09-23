@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="300" viewBox="0 0 860 300" font-family="system-ui,sans-serif">
+<rect width="860" height="300" fill="#ffffff"/>
+<line x1="48" y1="254.0" x2="844" y2="254.0" stroke="#d8dee4" stroke-width="1"/>
+<text x="42" y="258.0" fill="#57606a" font-size="11" text-anchor="end">0%</text>
+<line x1="48" y1="198.0" x2="844" y2="198.0" stroke="#d8dee4" stroke-width="1"/>
+<text x="42" y="202.0" fill="#57606a" font-size="11" text-anchor="end">25%</text>
+<line x1="48" y1="142.0" x2="844" y2="142.0" stroke="#d8dee4" stroke-width="1"/>
+<text x="42" y="146.0" fill="#57606a" font-size="11" text-anchor="end">50%</text>
+<line x1="48" y1="86.0" x2="844" y2="86.0" stroke="#d8dee4" stroke-width="1"/>
+<text x="42" y="90.0" fill="#57606a" font-size="11" text-anchor="end">75%</text>
+<line x1="48" y1="30.0" x2="844" y2="30.0" stroke="#d8dee4" stroke-width="1"/>
+<text x="42" y="34.0" fill="#57606a" font-size="11" text-anchor="end">100%</text>
+<rect x="55.0" y="254.0" width="14.1" height="1.0" rx="2" fill="#c0392b"/>
+<rect x="154.5" y="254.0" width="14.1" height="1.0" rx="2" fill="#c0392b"/>
+<rect x="254.0" y="254.0" width="14.1" height="1.0" rx="2" fill="#c0392b"/>
+<rect x="353.5" y="254.0" width="14.1" height="1.0" rx="2" fill="#c0392b"/>
+<rect x="453.0" y="254.0" width="14.1" height="1.0" rx="2" fill="#c0392b"/>
+<rect x="552.5" y="254.0" width="14.1" height="1.0" rx="2" fill="#c0392b"/>
+<rect x="652.0" y="254.0" width="14.1" height="1.0" rx="2" fill="#c0392b"/>
+<rect x="751.5" y="254.0" width="14.1" height="1.0" rx="2" fill="#c0392b"/>
+<rect x="72.1" y="239.0" width="14.1" height="15.0" rx="2" fill="#b8860b"/>
+<rect x="171.6" y="209.2" width="14.1" height="44.8" rx="2" fill="#b8860b"/>
+<rect x="271.1" y="209.2" width="14.1" height="44.8" rx="2" fill="#b8860b"/>
+<rect x="370.6" y="194.2" width="14.1" height="59.8" rx="2" fill="#b8860b"/>
+<rect x="470.1" y="194.2" width="14.1" height="59.8" rx="2" fill="#b8860b"/>
+<rect x="569.6" y="194.2" width="14.1" height="59.8" rx="2" fill="#b8860b"/>
+<rect x="669.1" y="179.4" width="14.1" height="74.6" rx="2" fill="#b8860b"/>
+<rect x="768.6" y="179.4" width="14.1" height="74.6" rx="2" fill="#b8860b"/>
+<rect x="89.2" y="239.0" width="14.1" height="15.0" rx="2" fill="#1e7d3c"/>
+<rect x="188.7" y="179.4" width="14.1" height="74.6" rx="2" fill="#1e7d3c"/>
+<rect x="288.2" y="104.6" width="14.1" height="149.4" rx="2" fill="#1e7d3c"/>
+<rect x="387.7" y="104.6" width="14.1" height="149.4" rx="2" fill="#1e7d3c"/>
+<rect x="487.2" y="30.0" width="14.1" height="224.0" rx="2" fill="#1e7d3c"/>
+<rect x="586.7" y="30.0" width="14.1" height="224.0" rx="2" fill="#1e7d3c"/>
+<rect x="686.2" y="30.0" width="14.1" height="224.0" rx="2" fill="#1e7d3c"/>
+<rect x="785.7" y="30.0" width="14.1" height="224.0" rx="2" fill="#1e7d3c"/>
+<rect x="106.3" y="239.0" width="14.1" height="15.0" rx="2" fill="#1f6fb2"/>
+<rect x="205.8" y="179.4" width="14.1" height="74.6" rx="2" fill="#1f6fb2"/>
+<rect x="305.3" y="104.6" width="14.1" height="149.4" rx="2" fill="#1f6fb2"/>
+<rect x="404.8" y="74.8" width="14.1" height="179.2" rx="2" fill="#1f6fb2"/>
+<rect x="504.3" y="45.0" width="14.1" height="209.0" rx="2" fill="#1f6fb2"/>
+<rect x="603.8" y="30.0" width="14.1" height="224.0" rx="2" fill="#1f6fb2"/>
+<rect x="703.3" y="30.0" width="14.1" height="224.0" rx="2" fill="#1f6fb2"/>
+<rect x="802.8" y="30.0" width="14.1" height="224.0" rx="2" fill="#1f6fb2"/>
+<rect x="123.4" y="30.0" width="14.1" height="224.0" rx="2" fill="#6f42c1"/>
+<rect x="222.9" y="30.0" width="14.1" height="224.0" rx="2" fill="#6f42c1"/>
+<rect x="322.4" y="30.0" width="14.1" height="224.0" rx="2" fill="#6f42c1"/>
+<rect x="421.9" y="30.0" width="14.1" height="224.0" rx="2" fill="#6f42c1"/>
+<rect x="521.4" y="30.0" width="14.1" height="224.0" rx="2" fill="#6f42c1"/>
+<rect x="620.9" y="30.0" width="14.1" height="224.0" rx="2" fill="#6f42c1"/>
+<rect x="720.4" y="30.0" width="14.1" height="224.0" rx="2" fill="#6f42c1"/>
+<rect x="819.9" y="30.0" width="14.1" height="224.0" rx="2" fill="#6f42c1"/>
+<text x="97.8" y="270" fill="#57606a" font-size="11" text-anchor="middle">cycle 1</text>
+<text x="197.2" y="270" fill="#57606a" font-size="11" text-anchor="middle">cycle 2</text>
+<text x="296.8" y="270" fill="#57606a" font-size="11" text-anchor="middle">cycle 3</text>
+<text x="396.2" y="270" fill="#57606a" font-size="11" text-anchor="middle">cycle 4</text>
+<text x="495.8" y="270" fill="#57606a" font-size="11" text-anchor="middle">cycle 5</text>
+<text x="595.2" y="270" fill="#57606a" font-size="11" text-anchor="middle">cycle 6</text>
+<text x="694.8" y="270" fill="#57606a" font-size="11" text-anchor="middle">cycle 7</text>
+<text x="794.2" y="270" fill="#57606a" font-size="11" text-anchor="middle">cycle 8</text>
+<rect x="48" y="282" width="10" height="10" rx="2" fill="#c0392b"/>
+<text x="62" y="291" fill="#24292f" font-size="11">greedy</text>
+<rect x="198" y="282" width="10" height="10" rx="2" fill="#b8860b"/>
+<text x="212" y="291" fill="#24292f" font-size="11">epsilon_greedy</text>
+<rect x="348" y="282" width="10" height="10" rx="2" fill="#1e7d3c"/>
+<text x="362" y="291" fill="#24292f" font-size="11">evolved_policy</text>
+<rect x="498" y="282" width="10" height="10" rx="2" fill="#1f6fb2"/>
+<text x="512" y="291" fill="#24292f" font-size="11">knowledge_curator</text>
+<rect x="648" y="282" width="10" height="10" rx="2" fill="#6f42c1"/>
+<text x="662" y="291" fill="#24292f" font-size="11">thought_guided</text>
+<text x="48" y="18" fill="#24292f" font-size="13" font-weight="600">Decoy-trap suite — solve rate per cycle (greedy vs ε-greedy vs replay-gated policies vs curated KB vs thoughts)</text>
+</svg>

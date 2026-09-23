@@ -250,47 +250,68 @@ the frontier observation carries scores, visit counts and error strings, but
 nothing about \emph{which idea} a node stands for. A loop can therefore
 re-expand a branch forever without knowing it is re-polishing the same dead
 plan, and a proposal cannot see which ideas the branch already exhausted.
-Thought-conditioned branching (\texttt{enable\_thoughts}) closes this gap
-with two cheap, purely textual additions.
+Thought-conditioned branching (the runtime default,
+\texttt{enable\_thoughts=True}, ablatable with \texttt{--no-thoughts}) closes
+this gap with three cheap, purely textual additions.
 
 \hdr{Per-node idea label.} When enabled, the candidate system prompt asks the
 model for exactly one \texttt{PLAN:} line before the code block; the line is
-extracted tolerantly and stored as \texttt{TreeNode.thought} (truncated at
-240 characters). Like lessons, thoughts are pure text---never executed---and
-are persisted with the archived tree, so replay worlds and later cycles see
-the same labels. The frontier entry and the policy-generation summary gain a
-\texttt{thought} field, letting LLM-written policies reason over idea
-families, not just scores.
+extracted tolerantly (bullets, dropped colons and case are forgiven) and
+stored as \texttt{TreeNode.thought}, truncated at 240 characters. Like
+lessons, thoughts are pure text---never executed, never fed to a sandbox---so
+their admission requires no gate beyond length, and they are persisted with
+the archived tree, so replay worlds and later cycles see the same labels.
+The frontier entry and the policy-generation summary gain a \texttt{thought}
+field, letting LLM-written policies reason over idea families, not just scores.
 
 \hdr{Tried-idea ledger.} Every proposal prompt additionally carries the
-task's deduplicated idea ledger (best recorded outcome per distinct idea,
-$\leq$8 lines): which plans have already been tried in this task and what
-the verifier said about each. The model is instructed not to repeat a dead
-idea verbatim and to build on structurally promising ones.
+task's deduplicated idea ledger---best recorded outcome per distinct idea,
+$\leq$8 lines---rendered above the policy hints: which plans have already
+been attempted in this task, and what the verifier said about each. The
+model is instructed not to repeat a dead idea verbatim and to build on
+structurally promising ones. The ledger is deliberately task-wide rather
+than branch-local: whether an idea is dead does not depend on which node
+happens to be expanded next.
 
-\hdr{Semantic escape from idea stagnation.} At expansion time, if the
-score-greedy choice is a node whose recorded children carry the \emph{same}
-one-line idea as the node itself---evidence of polishing a dead plan rather
-than converging---the loop deterministically expands the best-outcome node
-outside that idea family instead. No randomness, no API call, no scores
-improving: the trigger is recorded semantic evidence. When nothing is
-stagnant (or ideas are absent), the normal policy/epsilon/greedy cascade
-decides, so the feature strictly refines, never overrides, the existing
-machinery.
+\hdr{Semantic escape from idea stagnation.} At expansion time, the loop
+applies the rule shown below after the promoted policy program declines to
+act and before the $\varepsilon$/greedy cascade decides:
+
+\begin{quote}\small\begin{minipage}{0.94\linewidth}
+\textbf{Stagnation steering.} Let $b$ be the score-greedy frontier pick with
+idea $t$. If $t$ is empty, or no recorded child of $b$ carries $t$ again
+(the branch is converging, not repeating), do nothing---normal cascade.
+Otherwise $b$ is polishing a dead plan: choose the frontier node
+maximising $(\mathit{outcome}, -\mathit{children})$ among (i) nodes labelled
+with a \emph{different}, non-empty idea, or, if none exist, (ii) nodes with
+no idea label at all (typically the seed, whose ladder may still hold
+untried ideas). No randomness, no API call, no verifier score improving:
+the trigger is recorded semantic evidence about the \emph{idea}, and the
+selection prefers the least-expanded node with the best known continuation.
+\end{minipage}\end{quote}
+
+The rule strictly refines the existing machinery: when nothing is stagnant
+it is inert, and when it fires it can only redirect expansion to a node the
+policy cascade was already allowed to choose---so the worst outcome of a
+mislabelled thought is neutral, matching the fallback philosophy that
+protects the section-3 gate.
 
 \hdr{Causal attribution.} The decoy-trap benchmark's fifth arm
 (\S\ref{sec:bench}) isolates the contribution to the \emph{expansion-time
 steering}, not to the prompt text: with $\varepsilon$ forced to zero and
 both policy generation and curation disabled the arm escapes every trap
-from the first cycle, while the \texttt{thought\_steering=False} ablation
-(PLAN lines still recorded and the ledger still rendered into proposals,
-semantic pick disabled) collapses to the baselines---0/120 under greedy
-expansion, identical to $\varepsilon$-greedy's 29/120 with $\varepsilon$ on.
-The scripted solver is deliberately no more generous to the thought arm than
-to the lesson arm: the ledger may redirect a repeatedly-polished dead idea
-to the alternative idea, never directly to the fix, and tests assert that
-every solved task's fix node grows from expanding the promising-idea node---
-the same ladder every other arm must climb.
+from the first cycle (120/120, 164 calls, 1.37 calls per solve), while the
+\texttt{thought\_steering=False} ablation (PLAN lines still recorded and the
+ledger still rendered into proposals, semantic pick disabled) collapses to
+the baselines---0/120 under greedy expansion, identical to
+$\varepsilon$-greedy's 29/120 with $\varepsilon$ on. The scripted solver is
+deliberately no more generous to the thought arm than to the lesson arm:
+the ledger may redirect a repeatedly-polished dead idea to the alternative
+idea, never directly to the fix, and tests assert that every solved task's
+fix node grows from expanding the promising-idea node---the same ladder
+every other arm must climb. Selection therefore stops being purely numeric
+on evidence: the loop knows \emph{which idea} a branch stands for, and
+abandons it when the record says the idea is dead.
 
 \section{Benchmarks}
 \label{sec:bench}
@@ -365,7 +386,9 @@ semantic expansion pick disabled it falls back to 0/120 (greedy) and 29/120
 \includegraphics[width=\linewidth]{odr_policy_bench.png}
 \caption{Per-cycle solve rate on the decoy-trap suite (mean over 3 seeds).
 Greedy never escapes the decoy; $\varepsilon$-greedy escapes by luck;
-replay-gated policies and the curated knowledge base both saturate at 100\%.}
+replay-gated policies and the curated knowledge base saturate at 100\% only
+after several cycles; thought-guided branching---the shipped library
+default---escapes every trap from the first cycle at the lowest total cost.}
 \end{figure}
 
 \hdr{Seed robustness.} The shipped seeds (7,\,11,\,23) are not cherry-picked:
@@ -374,8 +397,8 @@ over five independent seed sets the two knowledge/policy arms land within
 indistinguishable from each other---while $\varepsilon$-greedy stays at
 21--32. The dominance over $\varepsilon$ (roughly 3$\times$ the solves at
 $\sim$70\% of its calls, 3.2 vs.\ 14 calls per solve) holds on every set.
-The thought arm reaches 119--120 of 120 on the three-run sets and 159/160
-and 200/200 on the four- and five-run sets---its per-set rate never drops
+The thought arm reaches 120/120 on both three-run seed sets and 159/160 and
+200/200 on the four- and five-run sets---its per-set rate never drops
 below 99\% and stays above the other machinery arms on every set.
 
 \subsection{Test suite}

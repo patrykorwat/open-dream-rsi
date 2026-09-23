@@ -320,18 +320,22 @@ class TrapSolver:
 # ---------------------------------------------------------------------------
 
 ARMS: Dict[str, Dict[str, Any]] = {
-    "greedy":         dict(enable_policy_code=False, enable_knowledge=False, explore_epsilon=0.0),
-    "epsilon_greedy": dict(enable_policy_code=False, enable_knowledge=False, explore_epsilon=0.3),
-    "evolved_policy": dict(enable_policy_code=True,  enable_knowledge=False, explore_epsilon=0.3),
+    # All baselines run with enable_thoughts=False explicitly: the runtime
+    # default is True (thoughts ship on), and the arms must stay pure.
+    "greedy":         dict(enable_policy_code=False, enable_knowledge=False,
+                           enable_thoughts=False, explore_epsilon=0.0),
+    "epsilon_greedy": dict(enable_policy_code=False, enable_knowledge=False,
+                           enable_thoughts=False, explore_epsilon=0.3),
+    "evolved_policy": dict(enable_policy_code=True,  enable_knowledge=False,
+                           enable_thoughts=False, explore_epsilon=0.3),
     # Knowledge arm: no LLM-written policy code — only the curated lesson KB
     # (distil -> validate -> retrieve -> usage-prune) vs epsilon_greedy. Any
     # improvement is attributable to knowledge, not to exploration heuristics.
     "knowledge_curator": dict(enable_policy_code=False, enable_knowledge=True,
-                              explore_epsilon=0.3),
-    # Thought arm: no policy code, no curated KB — only the per-node PLAN line
-    # and the branch's tried-idea ledger fed back into proposals (semantic
-    # steering without exploration heuristics or category-level lessons).
-    # Any improvement over epsilon_greedy is attributable to thoughts alone.
+                              enable_thoughts=False, explore_epsilon=0.3),
+    # Thought arm (the shipped default configuration): PLAN lines + tried-idea
+    # ledger + semantic stagnation steering, without policy code or curated
+    # KB. Any improvement over epsilon_greedy is attributable to thoughts.
     "thought_guided":   dict(enable_policy_code=False, enable_knowledge=False,
                              explore_epsilon=0.3, enable_thoughts=True),
 }
@@ -450,12 +454,22 @@ def to_markdown(summary: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def to_svg(summary: Dict[str, Any], width: int = 860, height: int = 300) -> str:
-    """Grouped bar chart: solve rate (%) per cycle per arm. Pure SVG, no deps."""
+def to_svg(summary: Dict[str, Any], width: int = 860, height: int = 300,
+           theme: str = "dark") -> str:
+    """Grouped bar chart: solve rate (%) per cycle per arm. Pure SVG, no deps.
+
+    ``theme``: 'dark' (GitHub-dark palette, README hero) or 'light'
+    (print/paper palette — white background, ink text, colourblind-safe hues).
+    """
     arms = summary["arms"]
     cycles = summary["cycles"]
-    colors = {"greedy": "#e5534b", "epsilon_greedy": "#d4a72c", "evolved_policy": "#3fb950",
-              "knowledge_curator": "#58a6ff", "thought_guided": "#bc8cff"}
+    dark = theme == "dark"
+    colors = ({"greedy": "#e5534b", "epsilon_greedy": "#d4a72c", "evolved_policy": "#3fb950",
+               "knowledge_curator": "#58a6ff", "thought_guided": "#bc8cff"} if dark else
+              {"greedy": "#c0392b", "epsilon_greedy": "#b8860b", "evolved_policy": "#1e7d3c",
+               "knowledge_curator": "#1f6fb2", "thought_guided": "#6f42c1"})
+    palette = dict(bg="#0d1117", grid="#21262d", axis="#8b949e", text="#c9d1d9") if dark \
+        else dict(bg="#ffffff", grid="#d8dee4", axis="#57606a", text="#24292f")
     pad_l, pad_r, pad_t, pad_b = 48, 16, 30, 46
     plot_w, plot_h = width - pad_l - pad_r, height - pad_t - pad_b
     slot_w = plot_w / max(cycles, 1)
@@ -463,18 +477,18 @@ def to_svg(summary: Dict[str, Any], width: int = 860, height: int = 300) -> str:
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
         f'viewBox="0 0 {width} {height}" font-family="system-ui,sans-serif">',
-        f'<rect width="{width}" height="{height}" fill="#0d1117"/>',
+        f'<rect width="{width}" height="{height}" fill="{palette["bg"]}"/>',
     ]
     # y grid
     for pct in (0, 25, 50, 75, 100):
         y = pad_t + plot_h * (1 - pct / 100.0)
         parts.append(f'<line x1="{pad_l}" y1="{y:.1f}" x2="{width - pad_r}" y2="{y:.1f}" '
-                     f'stroke="#21262d" stroke-width="1"/>')
-        parts.append(f'<text x="{pad_l - 6}" y="{y + 4:.1f}" fill="#8b949e" font-size="11" '
+                     f'stroke="{palette["grid"]}" stroke-width="1"/>')
+        parts.append(f'<text x="{pad_l - 6}" y="{y + 4:.1f}" fill="{palette["axis"]}" font-size="11" '
                      f'text-anchor="end">{pct}%</text>')
     # bars
     for ai, arm in enumerate(arms):
-        color = colors.get(arm["arm"], "#58a6ff")
+        color = colors.get(arm["arm"], "#58a6ff" if dark else "#1f6fb2")
         for ci, pct in enumerate(arm["mean_solve_rate_by_cycle"]):
             x = pad_l + ci * slot_w + 7 + ai * bar_w
             h = plot_h * pct / 100.0
@@ -484,17 +498,17 @@ def to_svg(summary: Dict[str, Any], width: int = 860, height: int = 300) -> str:
     # x labels + legend
     for ci in range(cycles):
         cx = pad_l + ci * slot_w + slot_w / 2
-        parts.append(f'<text x="{cx:.1f}" y="{pad_t + plot_h + 16}" fill="#8b949e" '
+        parts.append(f'<text x="{cx:.1f}" y="{pad_t + plot_h + 16}" fill="{palette["axis"]}" '
                      f'font-size="11" text-anchor="middle">cycle {ci + 1}</text>')
     lx = pad_l
     for arm in arms:
-        color = colors.get(arm["arm"], "#58a6ff")
+        color = colors.get(arm["arm"], "#58a6ff" if dark else "#1f6fb2")
         parts.append(f'<rect x="{lx}" y="{height - 18}" width="10" height="10" rx="2" '
                      f'fill="{color}"/>')
-        parts.append(f'<text x="{lx + 14}" y="{height - 9}" fill="#c9d1d9" font-size="11">'
+        parts.append(f'<text x="{lx + 14}" y="{height - 9}" fill="{palette["text"]}" font-size="11">'
                      f'{arm["arm"]}</text>')
         lx += 150
-    parts.append(f'<text x="{pad_l}" y="18" fill="#c9d1d9" font-size="13" '
+    parts.append(f'<text x="{pad_l}" y="18" fill="{palette["text"]}" font-size="13" '
                  f'font-weight="600">Decoy-trap suite — solve rate per cycle '
                  f'(greedy vs ε-greedy vs replay-gated policies vs curated KB vs thoughts)</text>')
     parts.append("</svg>")

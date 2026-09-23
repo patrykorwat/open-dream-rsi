@@ -150,7 +150,7 @@ class AutoRSIRuntime:
         max_tokens: int = 2048,
         enable_policy_code: bool = True,
         enable_knowledge: bool = True,
-        enable_thoughts: bool = False,
+        enable_thoughts: bool = True,
         thought_steering: bool = True,
         explore_epsilon: float = 0.15,
         rng_seed: int = 0,

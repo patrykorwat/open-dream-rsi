@@ -40,7 +40,7 @@ def cmd_loop(args: argparse.Namespace) -> int:
         max_tokens=args.max_tokens,
         enable_policy_code=not args.no_policy_code,
         enable_knowledge=not args.no_knowledge,
-        enable_thoughts=getattr(args, "thoughts", False),
+        enable_thoughts=not args.no_thoughts,
     )
     if args.once:
         report = runtime.run_once()
@@ -97,9 +97,10 @@ def main(argv: list[str] | None = None) -> int:
                       help="disable LLM-written exploration policies (section-3 step)")
     loop.add_argument("--no-knowledge", action="store_true",
                       help="disable the knowledge curator (lessons.json KB, section-4 step)")
-    loop.add_argument("--thoughts", action="store_true",
-                      help="record one-line PLAN per attempt and steer expansion by "
-                           "idea stagnation (semantic branching; off by default)")
+    loop.add_argument("--no-thoughts", action="store_true",
+                      help="disable thought-conditioned branching (PLAN lines, "
+                           "tried-idea ledger, semantic stagnation steering; "
+                           "on by default)")
     loop.add_argument("--interval", type=float, default=300.0, help="seconds between cycles")
     loop.add_argument("--cycles", type=int, default=None, help="stop after N cycles")
     loop.add_argument("--once", action="store_true", help="single cycle (for cron)")
@@ -136,6 +137,8 @@ def main(argv: list[str] | None = None) -> int:
     polbench.add_argument("--cycles", type=int, default=8)
     polbench.add_argument("--budget", type=int, default=24)
     polbench.add_argument("--format", choices=["json", "md", "svg"], default="json")
+    polbench.add_argument("--theme", choices=["dark", "light"], default="dark",
+                          help="SVG palette: dark (README) or light (print/paper)")
     polbench.add_argument("--out", default=None, help="write output to a file")
     polbench.set_defaults(func=cmd_bench_policy)
 
@@ -191,7 +194,7 @@ def cmd_bench_policy(args: argparse.Namespace) -> int:
     elif args.format == "md":
         text = pol_markdown(summary)
     else:
-        text = to_svg(summary)
+        text = to_svg(summary, theme=getattr(args, "theme", "dark"))
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
         print(f"wrote {args.out}")

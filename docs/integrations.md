@@ -77,6 +77,12 @@ The five tools the agent sees:
 | `odr_add_task` | queue a task (prompt + tests) for the dreamer |
 | `odr_run_once` | run one improvement cycle now (bounded API budget) |
 
+`odr_run_once` runs with **thought-conditioned branching enabled by
+default** (like the library itself): attempts record their one-line `PLAN:`,
+proposals see the tried-idea ledger, and expansion leaves dead idea
+families — the strongest configuration from the decoy-trap benchmark, no
+setup needed. Pass `thoughts: false` to the tool to ablate it.
+
 Tip — let OpenCode consult the loop proactively: add to your project
 `AGENTS.md`:
 
