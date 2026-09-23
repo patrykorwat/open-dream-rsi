@@ -42,6 +42,26 @@ ENDPOINT_PRESETS: Dict[str, Dict[str, str]] = {
 }
 
 
+def _resolve_goose_preset(**overrides: Any) -> "LLMConfig":
+    """Build a config from goose's own provider/model/key (~/.config/goose).
+
+    Used when preset == 'goose': the dreamer borrows the exact model the
+    goose session is using — one brain, one credential, no key duplication.
+    """
+    from open_dream_rsi.utils.goose import resolve_goose
+
+    up = resolve_goose(
+        provider=overrides.pop("goose_provider", None),
+        model=overrides.pop("goose_model", None),
+        base_url=overrides.pop("base_url", None),
+        api_key=overrides.pop("api_key", None),
+    )
+    return LLMConfig(
+        base_url=up.base_url, model=up.model or "goose-model",
+        api_key=up.api_key, api_key_env=None, extra_headers=dict(up.headers),
+    )
+
+
 @dataclass
 class LLMConfig:
     """LLM client configuration (via environment variables or explicit values)."""
@@ -64,8 +84,10 @@ class LLMConfig:
         (``OPENAI_BASE_URL``, ``ODR_LLM_MODEL``) > preset defaults.
         """
         if preset not in ENDPOINT_PRESETS:
+            if preset == "goose":  # borrow goose's own provider/model/key
+                return _resolve_goose_preset(**overrides)
             raise ValueError(
-                f"Unknown preset '{preset}'. Available: {sorted(ENDPOINT_PRESETS)}"
+                f"Unknown preset '{preset}'. Available: {sorted(ENDPOINT_PRESETS)} + 'goose'"
             )
         p = ENDPOINT_PRESETS[preset]
         api_key_env = overrides.pop("api_key_env", p["api_key_env"])

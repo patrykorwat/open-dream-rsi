@@ -206,7 +206,7 @@ TOOLS: Dict[str, Dict[str, Any]] = {
                        "on by default). Returns a solve/budget report.",
         "inputSchema": {"type": "object", "properties": {
             "tasks_file": {"type": "string"}, "memory": {"type": "string"},
-            "provider": {"type": "string", "enum": ["openai", "cursor", "local", "mock"]},
+            "provider": {"type": "string", "enum": ["openai", "cursor", "local", "goose", "mock"]},
             "model": {"type": "string"},
             "thoughts": {"type": "boolean",
                          "description": "thought-conditioned branching (default true)"},
