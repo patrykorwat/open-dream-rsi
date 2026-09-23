@@ -152,6 +152,10 @@ def tool_odr_run_once(args: Dict[str, Any]) -> Dict[str, Any]:
         memory=DreamMemory(_memory_root(args)),
         tasks=tasks,
         api_call_budget=int(args.get("budget", 10)),
+        # Thought-conditioned branching ships ON (library default): attempts
+        # record their PLAN line, proposals see the tried-idea ledger, and
+        # expansion leaves dead idea families. Harnesses can opt out.
+        enable_thoughts=bool(args.get("thoughts", True)),
     )
     return runtime.run_once().to_dict()
 
@@ -198,11 +202,14 @@ TOOLS: Dict[str, Dict[str, Any]] = {
     },
     "odr_run_once": {
         "description": "Run one Dream-RSI cycle over the queued tasks now (online LLM "
-                       "attempts + offline dreaming). Returns a solve/budget report.",
+                       "attempts + offline dreaming, thought-conditioned branching "
+                       "on by default). Returns a solve/budget report.",
         "inputSchema": {"type": "object", "properties": {
             "tasks_file": {"type": "string"}, "memory": {"type": "string"},
             "provider": {"type": "string", "enum": ["openai", "cursor", "local", "mock"]},
             "model": {"type": "string"},
+            "thoughts": {"type": "boolean",
+                         "description": "thought-conditioned branching (default true)"},
             "budget": {"type": "integer", "description": "Max API calls (default 10)"}}},
         "fn": tool_odr_run_once,
     },
