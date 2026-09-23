@@ -156,6 +156,20 @@ TRAP_LESSON_TEXT = (
 )
 
 
+#: One-line PLAN texts the scripted solver states per code family when
+#: thoughts are requested (system prompt mentions PLAN). Plain English — no
+#: family code appears here, so the ideas ledger can never leak code into
+#: family detection. They are the branch's semantic labels: the ledger fed
+#: back into proposals is keyed on these phrases.
+IDEA_PHRASES = {
+    "seed": "first attempt on this branch",
+    "decoy": "sort-filter-and-reindex idea",
+    "promising": "single-pass keep-order idea",
+    "low": "stub empty-output idea",
+    "fix": "canonical dict-based idea",
+}
+
+
 class TrapSolver:
     """Deterministic scripted model implementing the decoy-trap world.
 
@@ -178,6 +192,16 @@ class TrapSolver:
     TRAP_LESSON_TEXT is visible in the prompt, decoy-family attempts are
     redirected to the promising alternative — knowledge replacing luck.
 
+    The thought arm adds a fourth causal route: when thoughts are on, every
+    reply carries ``PLAN: <idea phrase>`` and proposals see the branch's
+    tried-idea ledger. The scripted solver treats the ledger as real
+    semantic memory, EXACTLY as generously as it treats a curated lesson:
+    under the seed, a repeatedly-polished (or decayed) decoy idea in the
+    ledger redirects to the promising idea — the ledger NEVER shortcuts to
+    the fix; reaching it still requires expanding the promising node. The
+    arm's win must therefore come from the loop's own stagnation-triggered
+    steering, which the ledger_only ablation (thought_steering=False) pins.
+
     Policy-generation calls (system prompt contains 'exploration policy')
     return EXPLORER_POLICY — the candidate the replay gate must validate and
     promote on evidence. Curation calls (system prompt contains 'knowledge
@@ -198,11 +222,22 @@ class TrapSolver:
             return ""
         seg = m.group(1)
         # take until the next template section
-        for stop in ("\nPolicy hints", "\nPrevious failure"):
+        for stop in ("\nPolicy hints", "\nPrevious failure", "\nIdeas already tried"):
             i = seg.find(stop)
             if i >= 0:
                 seg = seg[:i]
         return seg
+
+    @staticmethod
+    def _ideas_section(user: str) -> str:
+        """The tried-idea ledger rendered by AutoRSIRuntime._ideas_ledger."""
+        m = re.search(r"Ideas already tried in this branch.*?\n(.*?)(?:\nPolicy hints|\Z)",
+                      user, re.S)
+        return m.group(1) if m else ""
+
+    @staticmethod
+    def _plan_requested(system: str) -> bool:
+        return "PLAN:" in system
 
     @staticmethod
     def _lesson_visible(user: str) -> bool:
@@ -238,26 +273,46 @@ class TrapSolver:
         cat = m.group(1) if m else "?"
         suite = next(s for s in TRAP_SUITES if s.category == cat)
         if suite.fix.strip() in user:  # recipe warm start or fix branch visible
-            return f"```python\n{suite.fix}```"
+            return self._reply(suite.fix, "fix", system)
         fam = self._family(suite, self._branch_section(user), user)
         if fam in ("decoy", "low") and self._lesson_visible(user):
             # the lesson worked: the model abandons decoy polishing for the
             # promising alternative idea instead of re-polishing the trap
-            return f"```python\n{suite.promising}```"
+            return self._reply(suite.promising, "promising", system)
+        if fam == "seed":
+            # thought-conditioned redirection, EXACTLY as generous as the
+            # lesson arm: the ledger can only redirect polishing of a dead
+            # idea to the alternative idea — it never shortcuts to the fix
+            # (reaching the fix still requires expanding the promising node)
+            ledger = self._ideas_section(user)
+            if ledger.count(IDEA_PHRASES["decoy"]) >= 2 \
+                    or (IDEA_PHRASES["decoy"] in ledger and IDEA_PHRASES["low"] in ledger):
+                # the same dead idea has been polished repeatedly (or decayed
+                # to the stub): abandon that idea family, try the other one
+                return self._reply(suite.promising, "promising", system)
         key = (cat, fam)
         self._ladder[key] = self._ladder.get(key, 0) + 1
         k = self._ladder[key]
         if fam == "seed":
-            code = {1: suite.decoy, 2: suite.promising}.get(k, suite.decoy)
+            code, out_fam = ({1: (suite.decoy, "decoy"),
+                              2: (suite.promising, "promising")}.get(k, (suite.decoy, "decoy")))
         elif fam == "decoy":
-            code = suite.decoy if k == 1 else suite.low
+            code, out_fam = (suite.decoy, "decoy") if k == 1 else (suite.low, "low")
         elif fam == "low":
-            code = suite.low
+            code, out_fam = suite.low, "low"
         elif fam == "promising":
-            code = suite.fix
+            code, out_fam = suite.fix, "fix"
         else:  # fix
-            code = suite.fix
-        return f"```python\n{code}```"
+            code, out_fam = suite.fix, "fix"
+        return self._reply(code, out_fam, system)
+
+    @staticmethod
+    def _reply(code: str, family: str, system: str) -> str:
+        """Wrap code in a fence; prepend the PLAN line when thoughts are on."""
+        body = f"```python\n{code}```"
+        if TrapSolver._plan_requested(system):
+            body = f"PLAN: {IDEA_PHRASES[family]}\n{body}"
+        return body
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +328,12 @@ ARMS: Dict[str, Dict[str, Any]] = {
     # improvement is attributable to knowledge, not to exploration heuristics.
     "knowledge_curator": dict(enable_policy_code=False, enable_knowledge=True,
                               explore_epsilon=0.3),
+    # Thought arm: no policy code, no curated KB — only the per-node PLAN line
+    # and the branch's tried-idea ledger fed back into proposals (semantic
+    # steering without exploration heuristics or category-level lessons).
+    # Any improvement over epsilon_greedy is attributable to thoughts alone.
+    "thought_guided":   dict(enable_policy_code=False, enable_knowledge=False,
+                             explore_epsilon=0.3, enable_thoughts=True),
 }
 
 
@@ -394,7 +455,7 @@ def to_svg(summary: Dict[str, Any], width: int = 860, height: int = 300) -> str:
     arms = summary["arms"]
     cycles = summary["cycles"]
     colors = {"greedy": "#e5534b", "epsilon_greedy": "#d4a72c", "evolved_policy": "#3fb950",
-              "knowledge_curator": "#58a6ff"}
+              "knowledge_curator": "#58a6ff", "thought_guided": "#bc8cff"}
     pad_l, pad_r, pad_t, pad_b = 48, 16, 30, 46
     plot_w, plot_h = width - pad_l - pad_r, height - pad_t - pad_b
     slot_w = plot_w / max(cycles, 1)
@@ -435,7 +496,7 @@ def to_svg(summary: Dict[str, Any], width: int = 860, height: int = 300) -> str:
         lx += 150
     parts.append(f'<text x="{pad_l}" y="18" fill="#c9d1d9" font-size="13" '
                  f'font-weight="600">Decoy-trap suite — solve rate per cycle '
-                 f'(greedy vs ε-greedy vs replay-gated policies vs curated KB)</text>')
+                 f'(greedy vs ε-greedy vs replay-gated policies vs curated KB vs thoughts)</text>')
     parts.append("</svg>")
     return "\n".join(parts)
 

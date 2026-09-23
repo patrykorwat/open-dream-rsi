@@ -66,7 +66,7 @@ Your best previous solution (may be absent):
 
 Branch you are expanding from (code already tried on this branch, may be absent):
 {branch}
-
+{ideas}
 Policy hints (higher temperature -> try something genuinely different):
 {policy}
 
@@ -77,6 +77,20 @@ Previous failure feedback:
 {feedback}
 
 Return the complete corrected/optimized solution as one python code block."""
+
+#: Appended to the system prompt when thoughts are recorded: the model must
+#: state its plan in one line before the code, and that line becomes the
+#: semantic label of the branch (see TreeNode.thought).
+PLAN_SYSTEM_SUFFIX = (
+    " Before the code block, write exactly one line 'PLAN: <one sentence>' "
+    "stating the distinct idea you are trying (not what you tried before)."
+)
+
+IDEAS_SECTION_TEMPLATE = """
+Ideas already tried in this branch (idea -> outcome). Do not repeat a dead
+idea verbatim; if one of these was structurally promising, build ON it:
+{lines}
+"""
 
 
 @dataclass
@@ -136,6 +150,8 @@ class AutoRSIRuntime:
         max_tokens: int = 2048,
         enable_policy_code: bool = True,
         enable_knowledge: bool = True,
+        enable_thoughts: bool = False,
+        thought_steering: bool = True,
         explore_epsilon: float = 0.15,
         rng_seed: int = 0,
     ):
@@ -165,6 +181,16 @@ class AutoRSIRuntime:
         # Hermes-style knowledge curator: failures are distilled into a
         # persistent, curated KB (lessons.json) retrieved into proposals.
         self.enable_knowledge = enable_knowledge
+        # Thought-conditioned branching: record the model's one-line plan per
+        # node and feed the branch's tried-idea ledger back into proposals and
+        # into the policy observation, so expansion steers semantically
+        # ("that idea is dead", "this idea almost worked") not just by score.
+        self.enable_thoughts = enable_thoughts
+        # thought_steering=False keeps the ledger in prompts but disables the
+        # semantic expansion pick — the ablation that separates "the model
+        # sees the tried-idea ledger" from "the loop leaves dead idea
+        # families" when measuring the arm.
+        self.thought_steering = thought_steering
         self._curator = KnowledgeCurator(client, max_tokens=max_tokens)
 
     def _emit(self, kind: str, **data: Any) -> None:
@@ -239,14 +265,15 @@ class AutoRSIRuntime:
                 break
             state_id = self._next_expansion(tree, category)
             branch_code = self._branch_code(tree, state_id)
+            ideas = self._ideas_ledger(tree) if self.enable_thoughts else ""
             lessons = self.memory.get_lessons(category)
             picked = select_lessons(lessons, task.prompt)
             keys = [lesson_key(l) for l in picked]
             surfaced.update(keys)
             self._emit("llm_call", task_id=task.task_id, category=category,
                        attempt=len(tree.nodes), temperature=float((policy or {}).get("temperature", 0.7)))
-            code = self._propose_candidate(task, policy, recipe, feedback, branch_code,
-                                           format_lessons(picked) or "(none yet)")
+            code, thought = self._propose_candidate(task, policy, recipe, feedback, branch_code,
+                                                   format_lessons(picked) or "(none yet)", ideas)
             self.api_calls_used += 1
             report.api_calls += 1
             if code is None:
@@ -255,6 +282,7 @@ class AutoRSIRuntime:
             self._emit("verification", task_id=task.task_id, category=category,
                        score=round(result.score, 3), ok=result.ok,
                        errors=result.detail if isinstance(result.detail, (list, str)) else str(result.detail),
+                       thought=thought[:120],
                        code=code[:800])
             node = tree.add_node(
                 f"{task.task_id}/try-{len(tree.nodes)}",
@@ -262,6 +290,7 @@ class AutoRSIRuntime:
                 result={"code": code, "errors": result.detail},
                 score=result.score,
                 parent_id=state_id,
+                thought=thought[:240] if self.enable_thoughts else "",
             )
             state_id = node.node_id
             if result.solved:
@@ -328,6 +357,80 @@ class AutoRSIRuntime:
             return None
         return (node.result or {}).get("code")
 
+    def _ideas_ledger(self, tree: DiscoveryTree) -> str:
+        """Render the tried-idea ledger of the WHOLE task history.
+
+        Tree-wide on purpose: the point of the ledger is telling the model
+        WHICH ideas are already dead anywhere in this task (score alone
+        cannot distinguish 'promising idea unexplored' from 'decoy idea
+        polishing'), so escaping a dead idea family does not depend on
+        which single node happens to be expanded next.
+        """
+        # dedupe by idea text, keep the best outcome per idea (stable order)
+        best: Dict[str, tuple] = {}
+        for node in tree.nodes.values():
+            thought = (getattr(node, "thought", "") or "").strip()
+            if not thought:
+                continue
+            if thought not in best or node.score > best[thought][0]:
+                best[thought] = (node.score, thought)
+        if not best:
+            return ""
+        lines = [f'  - "{t}" -> score {s:.3f}' for s, t in best.values()][:8]
+        return IDEAS_SECTION_TEMPLATE.format(lines="\n".join(lines))
+
+    def _thought_aware_pick(self, tree: DiscoveryTree,
+                            frontier: List[Dict[str, Any]]) -> Optional[str]:
+        """Semantic escape from idea stagnation, or None to keep greedy flow.
+
+        Score-greedy expansion locks onto the best-score leaf forever. When
+        that leaf's expansions keep producing the SAME one-line idea (a
+        child carries identical PLAN text — the branch is polishing a dead
+        idea, not converging), expand instead the best-OUTCOME node outside
+        that idea family (nodes labelled with the stagnant idea are excluded;
+        the seed node, labelled by nothing, stays a candidate — its ladder
+        still holds untried ideas). Deterministic: the escape is triggered by
+        recorded evidence about the IDEA, not by luck. Returns None (=>
+        epsilon/greedy decide) when nothing is stagnant or no candidate has
+        an idea label to reason about.
+        """
+        by_id = tree.nodes
+
+        def thought_of(nid: str) -> str:
+            node = by_id.get(nid)
+            return (node.thought or "").strip() if node else ""
+
+        def stagnant(nid: str) -> bool:
+            """Node's own idea is among its children's ideas -> dead polish."""
+            t = thought_of(nid)
+            node = by_id.get(nid)
+            return bool(t) and any(thought_of(c) == t
+                                   for c in (node.children if node else []))
+
+        best = max(frontier, key=lambda n: n["score"])
+        own = thought_of(best["node_id"])
+        if not own or not stagnant(best["node_id"]):
+            return None  # not re-polishing a recorded idea — greedy is fine
+        rank = lambda n: (n["outcome"], -n["children"])
+        fresh = [n for n in frontier
+                 if n["node_id"] != best["node_id"]
+                 and not stagnant(n["node_id"])
+                 and thought_of(n["node_id"]) != own
+                 and thought_of(n["node_id"])  # has an idea label to trust
+                 ]
+        if fresh:
+            return max(fresh, key=rank)["node_id"]
+        # fallback: a node without an idea label (e.g. the seed) may still
+        # hold untried ladder steps — expand it rather than the dead branch,
+        # but only when no confidently-fresh candidate exists.
+        unlabeled = [n for n in frontier
+                     if n["node_id"] != best["node_id"]
+                     and not thought_of(n["node_id"])
+                     and not stagnant(n["node_id"])]
+        if not unlabeled:
+            return None
+        return max(unlabeled, key=rank)["node_id"]
+
     def _next_expansion(self, tree: DiscoveryTree, category: str) -> Optional[str]:
         """Pick the node to expand next — LLM-written policy if promoted, greedy else.
 
@@ -347,6 +450,14 @@ class AutoRSIRuntime:
             ids = {n["node_id"] for n in frontier}
             if run.ok and run.choice in ids:
                 return run.choice
+        # Thought-conditioned steering: when the score-greedy pick is a node
+        # whose IDEA family already re-polished itself (children with the same
+        # PLAN line), expand OUTSIDE that family — deterministic escape from
+        # the decoy trap that needs neither scores improving nor luck.
+        if self.enable_thoughts and self.thought_steering:
+            pick = self._thought_aware_pick(tree, frontier)
+            if pick:
+                return pick
         # epsilon-exploration baseline: occasionally try a uniformly random
         # node instead of re-polishing the best-score leaf (escapes decoys
         # only by luck — this is the "epsilon-greedy" comparison arm)
@@ -470,7 +581,13 @@ class AutoRSIRuntime:
         feedback: str,
         branch_code: Optional[str] = None,
         lessons: str = "(none yet)",
-    ) -> Optional[str]:
+        ideas: str = "",
+    ) -> tuple[Optional[str], str]:
+        """Ask the model for the next attempt. Returns (code, thought).
+
+        ``thought`` is the PLAN line the model states when thoughts are on
+        ("" otherwise) — the semantic label recorded on the resulting node.
+        """
         temperature = float((policy or {}).get("temperature", 0.7))
         user = REFINE_USER_TEMPLATE.format(
             category=task.category,
@@ -478,14 +595,18 @@ class AutoRSIRuntime:
             tests="\n".join(f"  {t['call']} -> {t['expected']!r}" for t in task.tests),
             recipe=recipe or "(none yet)",
             branch=branch_code or "(fresh branch — nothing tried here yet)",
+            ideas=ideas,
             policy=json.dumps(policy or {}),
             lessons=lessons,
             feedback=feedback or "(none)",
         )
+        system = CANDIDATE_SYSTEM_PROMPT
+        if self.enable_thoughts:
+            system += PLAN_SYSTEM_SUFFIX
         try:
             reply = self.client.chat(
                 [
-                    {"role": "system", "content": CANDIDATE_SYSTEM_PROMPT},
+                    {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
                 temperature=temperature,
@@ -493,8 +614,26 @@ class AutoRSIRuntime:
             )
         except Exception as exc:  # provider error => skip this attempt, keep dreaming
             self.memory.log_event("llm_error", task_id=task.task_id, error=str(exc)[:300])
-            return None
-        return _extract_python_code(reply)
+            return None, ""
+        thought = _extract_plan_line(reply) if self.enable_thoughts else ""
+        return _extract_python_code(reply), thought
+
+
+def _extract_plan_line(reply: str) -> str:
+    """Pull the 'PLAN: ...' line out of a reply (the node's semantic label).
+
+    Tolerant: the model may prefix whitespace/bullets or drop the colon;
+    we take the first line mentioning PLAN and strip the marker. Pure text —
+    never executed, only rendered into prompts and frontier observations.
+    """
+    for line in reply.splitlines():
+        stripped = line.strip().lstrip("#*>- ").strip()
+        upper = stripped.upper()
+        if upper.startswith("PLAN:") or upper.startswith("PLAN "):
+            text = stripped[4:].lstrip(" :").strip()
+            if text:
+                return text
+    return ""
 
 
 def _extract_python_code(reply: str) -> Optional[str]:
