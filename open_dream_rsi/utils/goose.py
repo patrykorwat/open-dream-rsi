@@ -183,14 +183,22 @@ def _is_local(base_url: str) -> bool:
 
 
 def _keychain(secret_name: str) -> Optional[str]:
-    """Best-effort macOS keychain probe under the ``goose`` service name."""
-    if sys.platform != "darwin" or not shutil.which("security"):
+    """Best-effort macOS keychain probe under the ``goose`` service name.
+
+    Uses an absolute binary path when PATH is scrubbed (goose spawns
+    extensions with a cleared environment, so shutil.which may find nothing).
+    """
+    if sys.platform != "darwin":
         return None
-    candidates = [secret_name, f"GOOSE_{secret_name}", f"goose_{secret_name}"]
+    binary = shutil.which("security") or "/usr/bin/security"
+    if not os.path.exists(binary):
+        return None
+    candidates = [secret_name, f"GOOSE_{secret_name}", f"goose_{secret_name}",
+                  secret_name.replace("_", "-")]
     for account in candidates:
         try:
             proc = subprocess.run(
-                ["security", "find-generic-password", "-s", "goose", "-a", account, "-w"],
+                [binary, "find-generic-password", "-s", "goose", "-a", account, "-w"],
                 capture_output=True, text=True, timeout=5,
             )
         except (OSError, subprocess.TimeoutExpired):
