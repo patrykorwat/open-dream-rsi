@@ -87,7 +87,10 @@ def main(argv: list[str] | None = None) -> int:
 
     loop = sub.add_parser("loop", help="run the self-improvement cycle")
     loop.add_argument("--tasks", required=True, help="JSON file: list of Task dicts")
-    loop.add_argument("--provider", default="openai", choices=["openai", "cursor", "local"])
+    loop.add_argument("--provider", default="openai",
+                      choices=["openai", "cursor", "local", "goose"],
+                      help="LLM endpoint; 'goose' borrows goose's own "
+                           "provider/model/key from ~/.config/goose")
     loop.add_argument("--model", default=None)
     loop.add_argument("--budget", type=int, default=20, help="max API calls per cycle")
     loop.add_argument("--max-tokens", type=int, default=2048,
@@ -150,6 +153,22 @@ def main(argv: list[str] | None = None) -> int:
                      help="memory dir (default $ODR_MEMORY or .dream_rsi)")
     mcp.set_defaults(func=cmd_mcp)
 
+    proxy = sub.add_parser(
+        "proxy",
+        help="OpenAI-compatible proxy forwarding to goose's own model "
+             "(borrow the host LLM; point OPENAI_BASE_URL at it)")
+    proxy.add_argument("--host", default="127.0.0.1")
+    proxy.add_argument("--port", type=int, default=8799)
+    proxy.add_argument("--provider", default=None, help="override GOOSE_PROVIDER")
+    proxy.add_argument("--model", default=None, help="override GOOSE_MODEL")
+    proxy.add_argument("--base-url", default=None, help="override upstream base URL")
+    proxy.add_argument("--api-key", default=None, help="override upstream key")
+    proxy.add_argument("--passthrough-models", action="store_true",
+                       help="keep caller's model instead of pinning GOOSE_MODEL")
+    proxy.add_argument("--print-config", action="store_true",
+                       help="show resolved upstream (key masked) and exit")
+    proxy.set_defaults(func=cmd_proxy)
+
     args = parser.parse_args(argv)
     return args.func(args)
 
@@ -163,6 +182,25 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     if args.memory:  # --memory is a top-level flag; forward it explicitly
         argv += ["--memory", args.memory]
     return mcp_main(argv)
+
+
+def cmd_proxy(args: argparse.Namespace) -> int:
+    from open_dream_rsi.proxy import main as proxy_main
+
+    argv = ["--host", args.host, "--port", str(args.port)]
+    if args.provider:
+        argv += ["--provider", args.provider]
+    if args.model:
+        argv += ["--model", args.model]
+    if args.base_url:
+        argv += ["--base-url", args.base_url]
+    if args.api_key:
+        argv += ["--api-key", args.api_key]
+    if args.passthrough_models:
+        argv += ["--passthrough-models"]
+    if args.print_config:
+        argv += ["--print-config"]
+    return proxy_main(argv)
 
 
 def cmd_bench(args: argparse.Namespace) -> int:

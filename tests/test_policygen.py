@@ -11,10 +11,12 @@ from open_dream_rsi.core.policygen import (
     PolicyGenerator,
     PolicySandbox,
     PolicyValidationError,
+    _simulate_step_rewards,
     evaluate_policy,
     extract_python_block,
     greedy_rollout_score,
     rollout_score,
+    rollout_world_payload,
     validate_policy_source,
 )
 from open_dream_rsi.core.tree import DiscoveryTree
@@ -161,6 +163,62 @@ def choose_action(frontier, step):
         score, err = evaluate_policy(self.sandbox, GOOD_POLICY, self.tree)
         self.assertEqual(err, "")
         self.assertGreaterEqual(score, greedy_rollout_score(self.tree) - 1e-9)
+
+    # -- issue #1 regression: prefix-only rollout --------------------------------
+
+    def test_replay_never_leaks_future_scores(self):
+        """root -> child(0.1) -> future(1.0): before the path reaches 'future',
+        the policy must not see its score, and camping on root must not get
+        paid for it (issue #1 reproduction)."""
+        tree = DiscoveryTree()
+        tree.add_node("root", "seed", {}, 0.0)
+        tree.add_node("child", "attempt", {}, 0.1, "root")
+        tree.add_node("future", "attempt", {}, 1.0, "child")
+        world = rollout_world_payload(tree, horizon=3)
+        # the serialized world carries no full-tree futures
+        self.assertEqual({n["node_id"]: n["outcome"] for n in world["nodes"]},
+                         {"root": 0.0, "child": 0.1, "future": 1.0})
+        seen = []
+        def camp_root(visible, step):
+            seen.append({n["node_id"]: n["outcome"] for n in visible})
+            return "root"
+        rewards, picks, invalid, err = _simulate_step_rewards(world, camp_root)
+        self.assertEqual(err, None)
+        # step 0: only root is visible and its outcome is its OWN score —
+        # neither the unrevealed child nor the future grandchild
+        self.assertEqual(seen[0], {"root": 0.0})
+        # camping pays the recorded child ladder (0.1) then the last recorded
+        # child — never the 1.0 the real path only found under 'child'
+        self.assertEqual(rewards, [0.1, 0.1, 0.1])
+
+    def test_exhausted_branch_pays_last_recorded_child_not_best_descendant(self):
+        """Seed of the trap tree: after its recorded ladder (decoy .667,
+        promising .333) is exhausted, camping it pays the LAST recorded
+        child's score — never the back-propagated best descendant (1.0)."""
+        tree = build_tree()
+        world = rollout_world_payload(tree, horizon=12)
+        rewards, picks, invalid, err = _simulate_step_rewards(
+            world, lambda visible, step: "seed")
+        self.assertEqual(err, None)
+        self.assertEqual(rewards[0], 0.667)  # first recorded child (decoy)
+        self.assertEqual(rewards[1], 0.333)  # second recorded child (promising)
+        self.assertTrue(all(abs(r - 0.333) < 1e-9 for r in rewards[2:]),
+                        f"exhausted ladder leaked best-descendant credit: {rewards}")
+
+    def test_outcome_becomes_visible_only_after_revealing(self):
+        """The as-of-now outcome rises exactly when the counterfactual path
+        opens the branch that contains the better score."""
+        tree = build_tree()
+        world = rollout_world_payload(tree, horizon=8)
+        outcomes_at = []
+        def open_seed_twice(visible, step):
+            vis = {n["node_id"]: n["outcome"] for n in visible}
+            outcomes_at.append(vis)
+            return "seed"
+        _simulate_step_rewards(world, open_seed_twice)
+        self.assertEqual(outcomes_at[0].get("seed"), 0.0)          # nothing revealed
+        self.assertAlmostEqual(outcomes_at[1]["seed"], 0.667, places=3)  # decoy revealed
+        self.assertAlmostEqual(outcomes_at[2]["seed"], 0.667, places=3)  # promising revealed; fix still hidden
 
 
 class ScriptedPolicyClient:
