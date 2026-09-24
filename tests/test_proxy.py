@@ -128,6 +128,31 @@ class ResolverTests(unittest.TestCase):
             with self.assertRaises(GooseConfigError):
                 resolve_goose(tmp)
 
+    def test_active_provider_desktop_format(self):
+        # goose desktop app format: active_provider + nested providers: block
+        with TemporaryDirectory() as tmp:
+            cdir = make_fake_goose_dir(Path(tmp), secret_name="SPARK_API_KEY")
+            cfg = Path(tmp, "config.yaml")
+            cfg.write_text(
+                "active_provider: custom_spark-27b7\n"
+                "providers:\n"
+                "  custom_spark-27b7:\n"
+                "    enabled: true\n"
+                "    model: local-inference-lab/Qwen3.8-Flash-Next-NVFP4\n"
+                "    configured: true\n"
+                "GOOSE_TELEMETRY_ENABLED: false\n", encoding="utf-8")
+            custom = {"name": "custom_spark-27b7", "engine": "openai",
+                      "base_url": "http://192.168.0.12:8000/v1",
+                      "api_key_env": "SPARK_API_KEY"}
+            cdir_p = Path(tmp, "custom_providers"); cdir_p.mkdir()
+            (cdir_p / "custom_spark-27b7.json").write_text(json.dumps(custom),
+                                                            encoding="utf-8")
+            up = resolve_goose(tmp)
+            self.assertEqual(up.provider, "custom_spark-27b7")
+            self.assertEqual(up.model, "local-inference-lab/Qwen3.8-Flash-Next-NVFP4")
+            self.assertEqual(up.base_url, "http://192.168.0.12:8000/v1")
+            self.assertEqual(up.api_key, "sk-fak...e123")
+
     def test_unknown_engine_raises(self):
         with TemporaryDirectory() as tmp:
             cdir = make_fake_goose_dir(Path(tmp), provider="weird")

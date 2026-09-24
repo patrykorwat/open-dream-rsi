@@ -105,6 +105,47 @@ def _flatten_yaml(path: Path) -> Dict[str, str]:
     return out
 
 
+def _nested_block(path: Path, block: str) -> Dict[str, Dict[str, str]]:
+    """Parse a two-level ``block:`` mapping from goose's config.yaml.
+
+    The goose desktop app writes e.g.::
+
+        providers:
+          custom_spark-27b7:
+            enabled: true
+            model: local-inference-lab/Qwen3.8-Flash-Next-NVFP4
+
+    which the flat reader skips (indented lines). Returns
+    ``{name: {key: value}}``; empty when the block is absent.
+    """
+    out: Dict[str, Dict[str, str]] = {}
+    if not path.exists():
+        return out
+    in_block = False
+    current: Optional[Dict[str, str]] = None
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        if indent == 0:
+            in_block = raw.strip().rstrip(":") == block
+            current = None
+            continue
+        if not in_block:
+            continue
+        stripped = raw.strip()
+        key, sep, value = stripped.partition(":")
+        if not sep:
+            continue
+        key, value = key.strip(), value.split(" #", 1)[0].strip().strip("'\"")
+        if indent <= 2 and not value:          # provider name line
+            current = {}
+            out[key] = current
+        elif current is not None and value:    # property line
+            current[key] = value
+    return out
+
+
 def goose_config_dir(override: Optional[str] = None) -> Path:
     """Locate the goose config directory (``~/.config/goose`` by default)."""
     root = override or os.environ.get(CONFIG_DIR_ENV)
@@ -212,14 +253,18 @@ def resolve_goose(
     settings = _flatten_yaml(cdir / "config.yaml")
     secrets = _flatten_yaml(cdir / "secrets.yaml")
     env = os.environ
+    providers_block = _nested_block(cdir / "config.yaml", "providers")
 
-    provider = provider or env.get("GOOSE_PROVIDER") or settings.get("GOOSE_PROVIDER")
+    provider = (provider or env.get("GOOSE_PROVIDER") or settings.get("GOOSE_PROVIDER")
+                # goose desktop app format: active_provider + nested providers: block
+                or settings.get("active_provider"))
     if not provider:
         raise GooseConfigError(
-            f"GOOSE_PROVIDER not found in {cdir / 'config.yaml'} — "
+            f"GOOSE_PROVIDER / active_provider not found in {cdir / 'config.yaml'} — "
             "pass --provider explicitly"
         )
-    model = model or env.get("GOOSE_MODEL") or settings.get("GOOSE_MODEL")
+    model = (model or env.get("GOOSE_MODEL") or settings.get("GOOSE_MODEL")
+             or (providers_block.get(provider) or {}).get("model"))
 
     custom = _find_custom_provider(cdir, provider)
     engine = (custom or {}).get("engine") or (provider if provider in KNOWN_ENGINES else None)
