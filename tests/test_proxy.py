@@ -153,6 +153,36 @@ class ResolverTests(unittest.TestCase):
             self.assertEqual(up.base_url, "http://192.168.0.12:8000/v1")
             self.assertEqual(up.api_key, "sk-fak...e123")
 
+    def test_custom_provider_block_only_no_json(self):
+        # desktop app may keep everything in the nested providers: block
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "config.yaml").write_text(
+                "active_provider: custom_spark-27b7\n"
+                "providers:\n"
+                "  custom_spark-27b7:\n"
+                "    enabled: true\n"
+                "    model: local-inference-lab/Qwen3.8-Flash-Next-NVFP4\n"
+                "    base_url: http://192.168.0.12:8000/v1\n", encoding="utf-8")
+            (Path(tmp) / "secrets.yaml").write_text(
+                "CUSTOM_SPARK_27B7_API_KEY: ***", encoding="utf-8")
+            up = resolve_goose(tmp)
+            self.assertEqual(up.engine, "openai")
+            self.assertEqual(up.base_url, "http://192.168.0.12:8000/v1")
+            self.assertEqual(up.model, "local-inference-lab/Qwen3.8-Flash-Next-NVFP4")
+            self.assertEqual(up.api_key, "sk-lab-1")
+
+    def test_custom_provider_no_url_raises_with_hint(self):
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "config.yaml").write_text(
+                "active_provider: custom_orphan\n"
+                "providers:\n"
+                "  custom_orphan:\n"
+                "    enabled: true\n"
+                "    model: m\n", encoding="utf-8")
+            with self.assertRaises(GooseConfigError) as ctx:
+                resolve_goose(tmp)
+            self.assertIn("--base-url", str(ctx.exception))
+
     def test_unknown_engine_raises(self):
         with TemporaryDirectory() as tmp:
             cdir = make_fake_goose_dir(Path(tmp), provider="weird")

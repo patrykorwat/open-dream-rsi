@@ -268,6 +268,12 @@ def resolve_goose(
 
     custom = _find_custom_provider(cdir, provider)
     engine = (custom or {}).get("engine") or (provider if provider in KNOWN_ENGINES else None)
+    # Desktop-app custom providers ("custom_*") usually live in
+    # custom_providers/*.json, but may be declared only by the nested
+    # providers: block — such names speak the OpenAI protocol.
+    if engine is None and (provider.startswith("custom_")
+                           or provider in providers_block):
+        engine = "openai"
     if engine not in KNOWN_ENGINES:
         raise GooseConfigError(
             f"provider '{provider}' is neither openai/anthropic/ollama nor a "
@@ -276,16 +282,29 @@ def resolve_goose(
 
     headers = {str(k): str(v) for k, v in ((custom or {}).get("headers") or {}).items()}
 
+    block = providers_block.get(provider) or {}
     resolved_base: str
+    block_url = next((block[k] for k in ("base_url", "api_url", "url", "host", "api_base")
+                      if block.get(k)), None)
     if base_url:
         resolved_base = _derive_openai_base(base_url) if engine == "openai" else base_url.rstrip("/")
     elif custom and custom.get("base_url"):
         raw = custom["base_url"]
         resolved_base = _derive_openai_base(raw) if engine == "openai" else raw.rstrip("/")
+    elif block_url:
+        raw = block_url
+        resolved_base = _derive_openai_base(raw) if engine == "openai" else raw.rstrip("/")
     elif engine == "openai":
+        up_name = provider.replace("-", "_").replace(".", "_").upper()
         host = (settings.get("OPENAI_HOST") or settings.get("OPENAI_BASE_URL")
                 or env.get("OPENAI_HOST") or env.get("OPENAI_BASE_URL")
-                or DEFAULT_OPENAI_HOST)
+                or env.get(f"{up_name}_HOST") or env.get(f"{up_name}_API_URL")
+                or (DEFAULT_OPENAI_HOST if provider in KNOWN_ENGINES else None))
+        if not host:
+            raise GooseConfigError(
+                f"custom provider '{provider}' has no base_url in "
+                f"{cdir / 'custom_providers'} or the providers: block — pass "
+                "--base-url (or export " + f"{up_name}_HOST)")
         base_path = (settings.get("OPENAI_BASE_PATH") or env.get("OPENAI_BASE_PATH")
                      or DEFAULT_OPENAI_BASE_PATH)
         resolved_base = _compose_openai_base(host, base_path)
@@ -300,8 +319,14 @@ def resolve_goose(
         if not resolved_base.endswith("/v1"):
             resolved_base += "/v1"
 
-    key_env = (custom or {}).get("api_key_env") or _KEY_ENV_BY_ENGINE[engine]
-    key, source = _find_key(key_env, api_key, secrets, env)
+    key_env = (custom or {}).get("api_key_env")
+    if not key_env and (provider.startswith("custom_") or provider in providers_block):
+        # goose desktop app convention for custom providers: <NAME>_API_KEY
+        key_env = f"{provider.replace('-', '_').replace('.', '_').upper()}_API_KEY"
+    key, source = _find_key(key_env or _KEY_ENV_BY_ENGINE[engine], api_key, secrets, env)
+    if key is None and (custom or provider in providers_block or provider.startswith("custom_")):
+        # try the plain engine key as last resort (shared credentials)
+        key, source = _find_key(_KEY_ENV_BY_ENGINE[engine], api_key, secrets, env)
     if key is None and engine != "anthropic" and _is_local(resolved_base):
         key, source = "local", "local-endpoint"  # vLLM/Ollama accept any bearer
 
