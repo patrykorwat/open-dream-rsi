@@ -97,6 +97,28 @@ Tip — let OpenCode consult the loop proactively: add to your project
 
 ## Goose
 
+### Recommended: let the script wire everything
+
+```bash
+cd open-dream-rsi
+./scripts/odr_goose_setup.sh            # diagnose + configure goose + start proxy
+./scripts/odr_goose_setup.sh --check    # diagnose only, change nothing
+./scripts/odr_goose_setup.sh --no-proxy # skip the proxy (use provider='goose')
+```
+
+The script verifies the install, resolves your goose provider (CLI
+`GOOSE_*` **or** desktop `active_provider:` + nested `providers:` block),
+starts the model-borrowing proxy, sends one real completion through it, and
+writes the extension block into `~/.config/goose/config.yaml` itself
+(`open_dream_rsi.utils.goose_config` — targeted block editor: backs the file
+up with a timestamp, replaces a stale entry including inline comments, stays
+idempotent, never touches foreign entries, verifies the result by reading
+the file back). Afterwards: **fully quit goose (Cmd+Q — the desktop app
+caches config at startup), relaunch, activate `open-dream-rsi` in the
+session's extensions picker.**
+
+### Manual block
+
 Add the extension to `~/.config/goose/config.yaml`
 (or run `goose configure` → *Add Extension* → *Command-line Extension* and
 enter the same command/args):
@@ -144,10 +166,15 @@ first-class ways to run the dreamer on **exactly the model goose uses**:
 
 1. **`provider: "goose"` (zero daemon).** Pass it to `odr_run_once` (or
    `--provider goose` on `loop`): Open Dream-RSI reads
-   `~/.config/goose/config.yaml` (`GOOSE_PROVIDER` / `GOOSE_MODEL`),
-   `custom_providers/*.json` and `secrets.yaml` — including the macOS
-   keychain — and calls that same endpoint itself. The credential stays in
-   goose's storage; nothing is duplicated in the extension config.
+   `~/.config/goose/config.yaml` — CLI style (`GOOSE_PROVIDER` /
+   `GOOSE_MODEL`) or desktop style (`active_provider:` + nested
+   `providers:` block) — plus `custom_providers/*.json`, `secrets.yaml` and
+   the macOS keychain, and calls that same endpoint itself. The credential
+   stays in goose's storage; nothing is duplicated in the extension config.
+   Caveat: an MCP server spawned by goose gets a scrubbed environment, so a
+   key that lives only in your shell export is invisible here — the proxy
+   (option 2) is the robust path for goose-spawned servers; `provider:
+   "goose"` shines for the standalone `loop` daemon and cron.
 
 2. **`proxy` (plain OpenAI-compatible endpoint).** If you want anything
    OpenAI-compatible pointed at goose's brain (not only ODR), start::
@@ -157,7 +184,7 @@ first-class ways to run the dreamer on **exactly the model goose uses**:
    and set, in this extension's `envs:` or anywhere else::
 
        OPENAI_BASE_URL: "http://127.0.0.1:8799/v1"
-       OPENAI_API_KEY: "pr..."        # proxy authenticates upstream itself
+       OPENAI_API_KEY: "proxy-internal"   # dummy; proxy authenticates upstream
 
    The proxy resolves the upstream **per request** (switching models in
    goose takes effect live), pins outgoing calls to `GOOSE_MODEL`
@@ -165,6 +192,32 @@ first-class ways to run the dreamer on **exactly the model goose uses**:
    binds to loopback only, and exposes `GET /health` (resolved upstream with
    the key masked) and `GET /v1/models`. Check the resolution without
    serving: `python3 -m open_dream_rsi proxy --print-config`.
+
+   Keep the proxy alive across reboots with a launchd agent — save as
+   `~/Library/LaunchAgents/dev.open-dream-rsi.proxy.plist` (adjust paths),
+   then `launchctl load ~/Library/LaunchAgents/dev.open-dream-rsi.proxy.plist`:
+
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+   <plist version="1.0"><dict>
+     <key>Label</key><string>dev.open-dream-rsi.proxy</string>
+     <key>ProgramArguments</key><array>
+       <string>/opt/homebrew/bin/python3</string>
+       <string>-m</string><string>open_dream_rsi</string>
+       <string>proxy</string><string>--port</string><string>8799</string>
+     </array>
+     <key>EnvironmentVariables</key><dict>
+       <!-- fallback credential for the upstream, if not in goose storage -->
+       <key>OPENAI_API_KEY</key><string>REPLACEME</string>
+     </dict>
+     <key>RunAtLoad</key><true/>
+     <key>KeepAlive</key><true/>
+     <key>StandardOutPath</key><string>/tmp/odr-proxy.log</string>
+     <key>StandardErrorPath</key><string>/tmp/odr-proxy.log</string>
+   </dict></plist>
+   ```
 
 ## Any other MCP client (Claude Code, Cursor, Zed, …)
 
@@ -187,3 +240,10 @@ the daemon dreams, the harness queries).
   `OPENAI_BASE_URL`/`ODR_LLM_MODEL` and try `provider: "mock"` for a key-free
   smoke test of the plumbing.
 - **Tool call denied** — Goose prompts per tool the first time; approve it.
+- **Tools exist but the model never calls them** — by design no model
+  self-initiates unfamiliar tools: trigger via recipe `instructions:`, a
+  hook, or an explicit ask ("call the odr_status tool"). In the **desktop
+  app**, also check the per-session extensions picker (enabled in
+  config.yaml ≠ active in this chat) and do a full Cmd+Q restart after any
+  config edit — re-run `./scripts/odr_goose_setup.sh --check` to confirm
+  the block is still in place.
