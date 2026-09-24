@@ -58,10 +58,10 @@ key-free benchmarks:
 the built-in suite), and \texttt{bench-policy}, a \emph{decoy-trap} suite that
 isolates exploration quality where solve-rate graphs saturate: score-greedy
 exploration solves \textbf{0/120} tasks, $\varepsilon$-greedy 24\%, replay-gated
-learned policies reach \textbf{72\%} (100\% by cycle~5) at \emph{fewer} total
+learned policies reach \textbf{77\%} (100\% by cycle~5) at \emph{fewer} total
 calls than $\varepsilon$ spends on luck, the curated
-knowledge base alone---with zero policy-generation calls---reproduces the same
-72\%, and thought-guided branching reaches \textbf{100\% from the first cycle}
+knowledge base alone---with zero policy-generation calls---reaches 72\%, and
+thought-guided branching reaches \textbf{100\% from the first cycle}
 at 1.37 calls per solve even with exploration randomness disabled. All headline numbers are produced by a scripted solver and are therefore
 claims about the \emph{machinery} (gates, sandboxes, promotion, retrieval),
 not about any particular model; we state this limitation explicitly.
@@ -183,8 +183,13 @@ reject it:
   \item \hdr{Counterfactual rollout scoring.} The candidate's decisions are
   replayed on the recorded discovery tree: at each simulated step the
   candidate picks a frontier node; the reward is the score the child actually
-  achieved in the recorded ladder (back-propagated outcome for
-  never-expanded nodes). One batched subprocess scores an entire rollout
+  achieved in the recorded ladder (the node's own score when the branch was
+  never expanded, its last recorded child when the ladder is exhausted).
+  The rollout is \emph{prefix-only}: at each step the candidate sees only
+  descendants its own counterfactual path has revealed, and the
+  \texttt{outcome} field is the best score among \emph{revealed}
+  descendants---no future score leaks into a present choice.
+  One batched subprocess scores an entire rollout
   ($\sim$15$\times$ faster than per-step spawning). The objective is
   \begin{equation}
     \text{score}(\pi) \;=\; \frac{1}{T}\sum_{t=1}^{T} r_t
@@ -343,7 +348,7 @@ dream loop (policies + recipes + dreaming) & 50 & 69 & 1.38 \\
 \bottomrule
 \end{tabular}
 \caption{\texttt{bench}: 54.0\% API-call saving at equal solve quality
-(3{,}000 dreaming iterations run offline; wall-clock 1.6\,s). The curator is
+(3{,}000 dreaming iterations run offline; wall-clock 2.1\,s). The curator is
 disabled in this benchmark to keep the cost measurement pure.}
 \end{table}
 
@@ -366,7 +371,7 @@ arm & solves & rate & calls & calls/solve & gen.\ calls \\
 \midrule
 greedy & 0/120 & 0\% & 480 & $\infty$ & 0 \\
 $\varepsilon$-greedy ($\varepsilon{=}0.3$) & 29/120 & 24\% & 405 & 13.97 & 0 \\
-replay-gated policies & \textbf{86/120} & \textbf{72\%} & \textbf{274} & \textbf{3.19} & 33 policy \\
+replay-gated policies & \textbf{92/120} & \textbf{77\%} & \textbf{252} & \textbf{2.74} & 27 policy \\
 curated knowledge base & \textbf{87/120} & \textbf{72\%} & 283 & 3.25 & 40 curator \\
 thought-guided branching & \textbf{120/120} & \textbf{100\%} & \textbf{164} & \textbf{1.37} & 0 \\
 \bottomrule
@@ -374,8 +379,8 @@ thought-guided branching & \textbf{120/120} & \textbf{100\%} & \textbf{164} & \t
 \caption{\texttt{bench-policy}: the knowledge arm is
 $\varepsilon$-greedy \emph{with zero policy calls}---every escape above the
 $\varepsilon$ baseline is attributable to remembered lessons. Policies and
-knowledge reach the same plateau (100\% by cycle~5 and~8 respectively);
-neither is ranked over the other, and 87 vs.\ 86 is noise. The thought arm
+knowledge reach the same plateau (100\% by cycle~5 and~8 respectively) and
+neither is ranked over the other. The thought arm
 additionally passes the \texttt{thought\_steering=False} ablation: with the
 semantic expansion pick disabled it falls back to 0/120 (greedy) and 29/120
 ($\varepsilon$), pinning its win to expansion-time steering (\S\ref{sec:thoughts}).}
@@ -392,20 +397,24 @@ default---escapes every trap from the first cycle at the lowest total cost.}
 \end{figure}
 
 \hdr{Seed robustness.} The shipped seeds (7,\,11,\,23) are not cherry-picked:
-over five independent seed sets the two knowledge/policy arms land within
-78--88 and 78--87 solves of 120 respectively---statistically
+over five independent seed sets the policy arm lands within 84--92 and the
+knowledge arm within 77--87 solves of 120 respectively---statistically
 indistinguishable from each other---while $\varepsilon$-greedy stays at
-21--32. The dominance over $\varepsilon$ (roughly 3$\times$ the solves at
-$\sim$70\% of its calls, 3.2 vs.\ 14 calls per solve) holds on every set.
-The thought arm reaches 120/120 on both three-run seed sets and 159/160 and
-200/200 on the four- and five-run sets---its per-set rate never drops
-below 99\% and stays above the other machinery arms on every set.
+15--29. The dominance over $\varepsilon$ (roughly 3$\times$ the solves at
+$\sim$60--70\% of its calls, 2.7--3.3 calls per solve vs.\ $\sim$14) holds on
+every set.
+The thought arm reaches 120/120 on every one of the five seed sets, staying
+above the other machinery arms on every set.
 
 \subsection{Test suite}
 
-66 tests pass (910 LOC), including the benchmark's behavioural contracts:
+88 tests pass (1{,}041 non-blank LOC), including the benchmark's behavioural
+contracts:
 trap-family scores equal their constructed values; the greedy arm must solve
-nothing; the gated-policy arm must dominate $\varepsilon$; curator schema,
+nothing; the gated-policy arm must dominate $\varepsilon$; the replay rollout
+must be prefix-only (no future score may reach a present choice,
+\S\ref{sec:policy}); the dreaming objective must respond causally to both
+policy parameters; curator schema,
 caps, dedup, and prune logic are pinned by unit tests.
 
 \section{Related work and positioning}
@@ -486,7 +495,7 @@ needs to compound---evidence-gated learned policies and a curated,
 self-pruning knowledge base---each backed by a deterministic benchmark that
 isolates exactly the capability it claims. At library scale: 54\% fewer API
 calls at equal solve quality; on a suite where greedy exploration solves
-nothing, replay-gated policies and remembered knowledge both reach 72\%
+nothing, replay-gated policies reach 77\% and remembered knowledge 72\%
 cumulative (100\% by cycle~5--8) at $\sim$4$\times$ better cost-per-solve
 than random escape. All artefacts pass structural gates before touching the
 loop; the gate, not trust, decides.

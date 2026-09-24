@@ -29,11 +29,15 @@ and the return is the ``node_id`` to expand next (or ``{"node_id": ...}``).
 
 Scoring is a **counterfactual rollout**, not a mean over recorded picks: the
 candidate replays the recorded tree step by step, and each expansion yields
-the node's *next recorded child* (falling back to a repeat of its last child,
-or to its own score when the branch was never expanded). This rewards
+the node's *next recorded child* (falling back to a repeat of its last
+child, or to its own score when the branch was never expanded). This rewards
 policies that would have opened branches the logging policy neglected —
 the decoy-trap case: a plausible high-score leaf that fails hidden tests
-forever, hiding the fix one expansion away on a different branch.
+forever, hiding the fix one expansion away on a different branch. The
+rollout is **prefix-only**: at each step the policy sees only descendants
+its counterfactual path has revealed, and ``outcome`` is the best score
+among *revealed* descendants — no future scores leak into present choices
+(issue #1).
 """
 
 from __future__ import annotations
@@ -198,12 +202,22 @@ try:
             child_index[kid] = i
     cursor = {}
     for step in range(horizon):
-        visible = []
+        revealed = set()
         for n in nodes:
             pid = n["parent_id"]
             if pid is None or cursor.get(pid, 0) > child_index.get(n["node_id"], 10**9):
+                revealed.add(n["node_id"])
+        asof = {n["node_id"]: n["score"] for n in nodes}
+        for n in reversed(nodes):                    # children before parents
+            for k in child_lists.get(n["node_id"], ()):
+                if k in revealed and asof[k] > asof[n["node_id"]]:
+                    asof[n["node_id"]] = asof[k]
+        visible = []
+        for n in nodes:
+            if n["node_id"] in revealed:
                 e = dict(n)
                 e["children"] = cursor.get(n["node_id"], 0)
+                e["outcome"] = asof[n["node_id"]]    # as-of-now: revealed only
                 visible.append(e)
         visible_ids = {e["node_id"] for e in visible}
         try:
@@ -221,10 +235,13 @@ try:
         c = cursor.get(pick, 0)
         if kids and c < len(kids):
             report["rewards"].append(by_id[kids[c]]["score"])       # next recorded child
+        elif kids:
+            # ladder exhausted: the branch rediscovers its LAST recorded child
+            report["rewards"].append(by_id[kids[-1]]["score"])
         else:
-            # re-expanding an exhausted/never-recorded branch rediscovers its
-            # best known continuation — the honest off-policy estimate
-            report["rewards"].append(by_id[pick]["outcome"])
+            # never expanded in the real run: no invented continuations,
+            # the policy pays the node's own score (counterfactual floor)
+            report["rewards"].append(by_id[pick]["score"])
         report["picks"].append(pick)
         cursor[pick] = c + 1
 except Exception:
@@ -326,8 +343,11 @@ def outcome_map(tree: DiscoveryTree) -> Dict[str, float]:
     """node_id -> best verifier score found anywhere below (or at) the node.
 
     Back-propagated like MCTS values: the seed that eventually led to the fix
-    carries the fix's score, which is what lets the policy (and the replay)
-    credit a branch the recorded path neglected.
+    carries the fix's score, which is what lets the ONLINE policy credit a
+    branch the recorded path neglected. Replay never uses this — the rollout
+    recomputes outcomes step by step from revealed nodes only (prefix-only),
+    so a policy can never see a score its counterfactual path has not
+    reached (issue #1).
     """
     nodes = list(tree.nodes.values())
     values = {n.node_id: n.score for n in nodes}
@@ -345,8 +365,18 @@ def _child_ids(tree: DiscoveryTree, node_id: str) -> List[str]:
 
 
 def frontier_entry(node: Any, outcomes: Dict[str, float]) -> Dict[str, Any]:
-    """The observation dict a policy sees for one node (online + replay parity)."""
-    errors = (node.result or {}).get("errors") or []
+    """The observation dict a policy sees for one node.
+
+    Field parity between online and replay; NOT value parity for
+    ``outcome``: the online view passes the full-tree :func:`outcome_map`,
+    the replay world passes an empty map and the harness overwrites
+    ``outcome`` per step with the as-of-now value over revealed descendants
+    only (prefix rule).
+    """
+    errors = []
+    result = node.result
+    if isinstance(result, dict):
+        errors = result.get("errors") or []
     return {
         "node_id": node.node_id,
         "action": node.action,
@@ -371,7 +401,6 @@ def rollout_world_payload(tree: DiscoveryTree,
     factual rollouts only discover branches the recorded tree actually has.
     """
     nodes = list(tree.nodes.values())
-    outcomes = outcome_map(tree)
     child_lists: Dict[str, List[str]] = {}
     for n in nodes:
         if n.parent_id:
@@ -379,7 +408,10 @@ def rollout_world_payload(tree: DiscoveryTree,
     steps = sum(1 for n in nodes if n.parent_id)
     horizon = horizon or max(MIN_HORIZON, steps)
     return {
-        "nodes": [frontier_entry(n, outcomes) for n in nodes],
+        # outcome map deliberately EMPTY here: the harness recomputes each
+        # node's outcome per step from revealed descendants only (prefix
+        # rule) — the serialized world must never carry full-tree futures.
+        "nodes": [frontier_entry(n, {}) for n in nodes],
         "child_lists": child_lists,
         "horizon": horizon,
     }
@@ -402,12 +434,22 @@ def _simulate_step_rewards(world: Dict[str, Any], pick_fn: Any) -> Tuple[List[fl
     picks: List[str] = []
     invalid = 0
     for step in range(horizon_n):
-        visible: List[Dict[str, Any]] = []
+        revealed: set = set()
         for n in nodes:
             pid = n["parent_id"]
             if pid is None or cursor.get(pid, 0) > child_index.get(n["node_id"], 10 ** 9):
+                revealed.add(n["node_id"])
+        asof = {n["node_id"]: n["score"] for n in nodes}
+        for n in reversed(nodes):                    # children before parents
+            for k in child_lists.get(n["node_id"], ()):
+                if k in revealed and asof[k] > asof[n["node_id"]]:
+                    asof[n["node_id"]] = asof[k]
+        visible: List[Dict[str, Any]] = []
+        for n in nodes:
+            if n["node_id"] in revealed:
                 e = dict(n)
                 e["children"] = cursor.get(n["node_id"], 0)
+                e["outcome"] = asof[n["node_id"]]    # as-of-now: revealed only
                 visible.append(e)
         visible_ids = {e["node_id"] for e in visible}
         try:
@@ -422,9 +464,11 @@ def _simulate_step_rewards(world: Dict[str, Any], pick_fn: Any) -> Tuple[List[fl
         kids = child_lists.get(pick, [])
         c = cursor.get(pick, 0)
         if kids and c < len(kids):
-            rewards.append(by_id[kids[c]]["score"])
+            rewards.append(by_id[kids[c]]["score"])                  # next recorded child
+        elif kids:
+            rewards.append(by_id[kids[-1]]["score"])      # exhausted: last recorded child
         else:
-            rewards.append(by_id[pick]["outcome"])  # best known continuation
+            rewards.append(by_id[pick]["score"])     # never expanded: own score (no invention)
         picks.append(pick)
         cursor[pick] = c + 1
     return rewards, picks, invalid, None
@@ -607,7 +651,8 @@ class PolicyGenerator:
     def _tree_summary(tree: DiscoveryTree, max_nodes: int = 12) -> str:
         lines = []
         for node in list(tree.nodes.values())[-max_nodes:]:
-            errs = (node.result or {}).get("errors") or []
+            result = node.result if isinstance(node.result, dict) else {}
+            errs = result.get("errors") or []
             errs_txt = (" errors=" + "; ".join(str(e)[:40] for e in errs[:2])) if errs else ""
             thought = str(getattr(node, "thought", "") or "")[:60]
             thought_txt = f"  thought='{thought}'" if thought else ""
