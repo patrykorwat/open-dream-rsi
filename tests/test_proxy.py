@@ -164,12 +164,13 @@ class ResolverTests(unittest.TestCase):
                 "    model: local-inference-lab/Qwen3.8-Flash-Next-NVFP4\n"
                 "    base_url: http://192.168.0.12:8000/v1\n", encoding="utf-8")
             (Path(tmp) / "secrets.yaml").write_text(
-                "CUSTOM_SPARK_27B7_API_KEY: ***", encoding="utf-8")
+                "CUSTOM_SPARK_27B7_API_KEY: abcsekret1", encoding="utf-8")
             up = resolve_goose(tmp)
             self.assertEqual(up.engine, "openai")
             self.assertEqual(up.base_url, "http://192.168.0.12:8000/v1")
             self.assertEqual(up.model, "local-inference-lab/Qwen3.8-Flash-Next-NVFP4")
-            self.assertEqual(up.api_key, "sk-lab-1")
+            self.assertEqual(up.api_key, "abcsekret1")
+            self.assertIn("secrets.yaml", up.api_key_source)
 
     def test_custom_provider_no_url_raises_with_hint(self):
         with TemporaryDirectory() as tmp:
