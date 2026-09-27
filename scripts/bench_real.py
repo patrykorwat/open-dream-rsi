@@ -113,8 +113,10 @@ SUITE: Dict[str, Dict[str, Any]] = {
 
 
 def make_task(cid: str, spec) -> Task:
+    import hashlib
     prompt, tests = spec
-    return Task(task_id=f"{cid}-{abs(hash(prompt)) % 10**8}",
+    # stable id across runs (Python's str hash is salted per process)
+    return Task(task_id=f"{cid}-{hashlib.sha1(prompt.encode()).hexdigest()[:8]}",
                 category=cid, prompt=prompt, tests=[dict(t) for t in tests],
                 max_attempts=4)
 
@@ -182,6 +184,8 @@ def main() -> int:
                     help="keep hidden reasoning ON (default: off, as in normal use)")
     ap.add_argument("--reps", type=int, default=1, help="repeats per eval task")
     ap.add_argument("--out", default="bench_real_results.json")
+    ap.add_argument("--resume", action="store_true",
+                    help="keep existing --out results and skip completed runs")
     ap.add_argument("--categories", default=",".join(SUITE))
     args = ap.parse_args()
     import os
@@ -190,31 +194,51 @@ def main() -> int:
     os.environ.setdefault("OPENAI_BASE_URL", args.base_url)
     os.environ.setdefault("OPENAI_API_KEY", "bench")
 
-    work = Path(".bench_real"); shutil.rmtree(work, ignore_errors=True)
+    work = Path(".bench_real")
+    if not args.resume:
+        shutil.rmtree(work, ignore_errors=True)
+    out_path = Path(args.out)
     results: List[Dict[str, Any]] = []
-    for cid in [c for c in args.categories.split(",") if c in SUITE]:
-        suite = SUITE[cid]
-        for rep_i in range(args.reps):
-            for eval_i, spec in enumerate(suite["eval"]):
-                # COLD: fresh memory per eval task
-                cold_dir = str(work / f"cold-{cid}-{rep_i}-{eval_i}")
-                r = run_task(make_task(cid, spec), cold_dir, args, "cold")
-                results.append(r)
-                print(f"[cold {cid}#{eval_i}] solved={r['tasks_solved']} "
-                      f"calls={r['api_calls']} wall={r['wall']}s", flush=True)
-            # WARM: one training task seeds the category memory, then evals
-            warm_dir = str(work / f"warm-{cid}-{rep_i}")
-            rt_rep = run_task(make_task(cid, suite["train"]), warm_dir, args, "train")
-            results.append(rt_rep)
-            print(f"[train {cid}] solved={rt_rep['tasks_solved']} "
-                  f"calls={rt_rep['api_calls']}", flush=True)
-            for eval_i, spec in enumerate(suite["eval"]):
-                r = run_task(make_task(cid, spec), warm_dir, args, "warm")
-                results.append(r)
-                print(f"[warm {cid}#{eval_i}] solved={r['tasks_solved']} "
-                      f"calls={r['api_calls']} wall={r['wall']}s", flush=True)
+    done: set = set()
+    if args.resume and out_path.exists():
+        results = json.loads(out_path.read_text())
+        done = {(r["label"], r["category"], r["task_id"]) for r in results}
+        print(f"resuming: {len(done)} runs already on record", flush=True)
 
-    Path(args.out).write_text(json.dumps(results, indent=2))
+    def save() -> None:
+        out_path.write_text(json.dumps(results, indent=2))
+    def run_step(task, mem_dir, label, cid):
+        key = (label, cid, task.task_id)
+        if key in done:
+            print(f"[skip {label} {cid}] (already done)", flush=True)
+            return
+        r = run_task(task, mem_dir, args, label)
+        results.append(r); save()
+        print(f"[{label} {cid}] solved={r['tasks_solved']} "
+              f"calls={r['api_calls']} errs={r['llm_errors']} wall={r['wall']}s",
+              flush=True)
+
+    try:
+        for cid in [c for c in args.categories.split(",") if c in SUITE]:
+            suite = SUITE[cid]
+            for rep_i in range(args.reps):
+                for eval_i, spec in enumerate(suite["eval"]):
+                    run_step(make_task(cid, spec),
+                             str(work / f"cold-{cid}-{rep_i}-{eval_i}"),
+                             "cold", f"{cid}#{eval_i}")
+                run_step(make_task(cid, suite["train"]),
+                         str(work / f"warm-{cid}-{rep_i}"), "train", cid)
+                for eval_i, spec in enumerate(suite["eval"]):
+                    run_step(make_task(cid, spec),
+                             str(work / f"warm-{cid}-{rep_i}"),
+                             "warm", f"{cid}#{eval_i}")
+    except EndpointDown:
+        save()
+        print("\nENDPOINT DOWN — partial results saved to", out_path,
+              "\nRe-run with --resume when the endpoint is back.", flush=True)
+        return 3
+
+    save()
     # summary
     def agg(label):
         evals = [r for r in results if r["label"] == label]
