@@ -119,8 +119,30 @@ def make_task(cid: str, spec) -> Task:
                 max_attempts=4)
 
 
+class EndpointDown(RuntimeError):
+    """vLLM refused connections — the run is invalid, not a model failure."""
+
+
+def _probe(base_url: str) -> None:
+    import urllib.request
+    try:
+        with urllib.request.urlopen(base_url.rstrip("/") + "/models", timeout=10):
+            return
+    except Exception as exc:
+        raise EndpointDown(str(exc)) from exc
+
+
 def run_task(task: Task, memory_dir: str, args, label: str) -> Dict[str, Any]:
     from open_dream_rsi.cli import _build_client
+    for attempt in range(6):  # ride out brief vLLM restarts
+        try:
+            _probe(args.base_url)
+            break
+        except EndpointDown:
+            if attempt == 5:
+                raise
+            print("  endpoint down, retry %d/5 in 20s..." % (attempt + 1), flush=True)
+            time.sleep(20)
     client = _build_client("local", args.model)
     if hasattr(client, "config"):
         client.config.timeout = 300.0
@@ -133,6 +155,17 @@ def run_task(task: Task, memory_dir: str, args, label: str) -> Dict[str, Any]:
     rep = rt.run_once().to_dict()
     rep.update(task_id=task.task_id, category=task.category, label=label,
                wall=round(time.time() - t0, 1))
+    # A solve reached through connection failures is NOT the same evidence
+    # as a clean solve — count llm_error events per task.
+    rep["llm_errors"] = 0
+    events = Path(memory_dir) / "events.jsonl"
+    if events.exists():
+        for line in events.read_text().splitlines():
+            try:
+                if json.loads(line).get("kind") == "llm_error":
+                    rep["llm_errors"] += 1
+            except json.JSONDecodeError:
+                pass
     return rep
 
 
@@ -187,11 +220,17 @@ def main() -> int:
                 "calls_per_solve": round(calls / solves, 2) if solves else None,
                 "wall_s": round(wall, 1)}
     summary = [agg("cold"), agg("warm")]
-    print("\n| arm | eval tasks | solved | api_calls | calls/solve | wall s |")
-    print("|---|---|---|---|---|---|")
+    print("\n| arm | eval tasks | solved | api_calls | calls/solve | wall s | llm_errors |")
+    print("|---|---|---|---|---|---|---|")
     for s in summary:
+        rows = [r for r in results if r["label"] == s["label"]]
+        s["llm_errors"] = sum(r.get("llm_errors", 0) for r in rows)
         print(f"| {s['label']} | {s['eval_tasks']} | {s['solved']} | "
-              f"{s['api_calls']} | {s['calls_per_solve']} | {s['wall_s']} |")
+              f"{s['api_calls']} | {s['calls_per_solve']} | {s['wall_s']} | "
+              f"{s['llm_errors']} |")
+    if any(s.get("llm_errors") for s in summary):
+        print("WARNING: llm_errors > 0 - some runs hit endpoint failures; "
+              "those rows are not clean evidence.")
     cold_c = summary[0]["calls_per_solve"]; warm_c = summary[1]["calls_per_solve"]
     if cold_c and warm_c:
         print(f"\ncompression: {cold_c} -> {warm_c} calls/solve "
