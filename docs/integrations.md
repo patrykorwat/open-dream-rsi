@@ -95,6 +95,44 @@ Tip — let OpenCode consult the loop proactively: add to your project
   dream over it offline.
 ```
 
+## How it fits together (and where the data lives)
+
+```
+  ┌────────────────────────────┐      ┌───────────────────────────────────────┐
+  │ AGENT HOSTS                │      │ MEMORY — one dir per dreaming instance│
+  │  Mac:  goose, claude, codex│      │  recipes.json      verified code+score│
+  │  your server:  Hermes (Docker)     │      │  lessons.json      failure lessons    │
+  │  web:  Cowork via tunnel   │      │  policies*.json    exploration params │
+  └───────────┬────────────────┘      │  trees/            dream trees (replay)│
+              │ stdio (local hosts)   │  events.jsonl      audit log: per-task│
+              │ or HTTP (remote)      │                    api_calls, solved   │
+              ▼                       └───────────────────▲───────────────────┘
+  ┌────────────────────────────┐                          │ read/write
+  │ odr-mcp server             │   resolves the brain:    │
+  │ (same package, stdlib only)│   OPENAI_* env → goose   │  only VERIFIED code
+  │ odr_add_task / odr_run_once│   config → localhost     │  (sandbox: python -I,
+  │ odr_status / recipes /...  │   vLLM; self-hosted →    │  scrubbed env) enters
+  └───────────┬────────────────┘   enable_thinking=false  │  recipes → next task
+              │ chat/completions                          │  of the category is
+              ▼                                           │  warm-started from it
+      the SAME model the host uses                        │  (this is the compression)
+      (one endpoint, no key duplication)
+```
+
+Data placement on this setup (your server, Hermes container):
+
+| data | host path | notes |
+|---|---|---|
+| production memory | `<hermes-compose-dir>/data/dream-rsi/.dream_rsi/` | bind-mounted at `/opt/data` — survives rebuilds |
+| task queue | `<hermes-compose-dir>/data/dream-rsi/tasks.json` | created lazily on first `odr_add_task` |
+| benchmark runs | `open-dream-rsi/.bench_real/` | deliberately outside the production memory |
+| package itself | `<hermes-compose-dir>/open-dream-rsi` → mounted `:ro`, `PYTHONPATH` | no pip layer in the image |
+
+Sharing across agents: memory is plain JSON — mount the same directory to
+several hosts (SSHFS/tailnet) and one dreamer feeds many consumers.
+Never hand-edit `recipes.json`/`lessons.json`; go through the tools so the
+verification gate holds.
+
 ## Goose
 
 ### Recommended: let the script wire everything

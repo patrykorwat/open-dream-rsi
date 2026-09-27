@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  body{margin:0;font-family:var(--app-font, ui-sans-serif,system-ui);color:var(--foreground);background:transparent;padding:14px}
+  h3{margin:0 0 4px;font-size:15px} .sub{color:var(--muted-foreground);font-size:11px;margin-bottom:10px}
+  .cols{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap}
+  .col{flex:1;min-width:220px;display:flex;flex-direction:column;gap:8px}
+  .box{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:8px 10px;font-size:12px;line-height:1.45}
+  .box b{font-size:12.5px} .box .t{color:var(--muted-foreground);font-size:10.5px}
+  .host{border-color:var(--accent);border-width:1.5px}
+  .arrow{align-self:center;color:var(--accent);font-size:16px;padding:0 2px}
+  .vert{display:flex;flex-direction:column;align-items:center;color:var(--accent);font-size:13px}
+  .tag{display:inline-block;border:1px solid var(--border);border-radius:4px;padding:0 5px;font-size:10px;color:var(--muted-foreground);margin-left:4px}
+  .mem{border-left:3px solid var(--accent)}
+  .legend{margin-top:10px;font-size:10.5px;color:var(--muted-foreground)}
+  code{font-size:11px}
+</style></head><body>
+<h3>Open Dream-RSI — co z czym rozmawia i gdzie leżą dane</h3>
+<div class="sub">stdio MCP = proces spawniony przez hosta; HTTP MCP = tunnel na publiczny URL; pamięć = zwykły katalog JSON, współdzielony przez wszystkich</div>
+<div class="cols">
+  <div class="col">
+    <div class="box host"><b>Hosty-agentów</b><br>
+      <span class="tag">Mac</span> goose (desktop) · claude/codex CLI<br>
+      <span class="tag">your server</span> Hermes w kontenerze <hermes-image><br>
+      <span class="tag">cloud</span> Cowork → <code>mcp --http</code> + tunnel<br>
+      <span class="t">każdy spawnia: <code>python3 -m open_dream_rsi mcp</code></span>
+    </div>
+    <div class="vert">↓stdio / ↑HTTP</div>
+    <div class="box"><b>odr-mcp</b> (ten sam pakiet, zero zależności)<br>
+      <span class="t">5 narzędzi: odr_status · odr_recipes · odr_lessons · odr_add_task · odr_run_once</span><br>
+      <span class="t">rozróżnienie mózgu: env OPENAI_* → ~/.config/goose → :8000/v1; self-hosted = no-think</span>
+    </div>
+    <div class="vert">↓ LLM (OpenAI-compatible)</div>
+    <div class="box"><b>Ten sam model, którego używa host</b><br>
+      <span class="t">vLLM Qwen3.8 na Sparku :8000 (albo proxy :8799 na Macu, albo key z configu hosta)</span>
+    </div>
+  </div>
+  <div class="col">
+    <div class="box mem"><b>pamięć śniącego — JEDEN katalog na instancję</b><br>
+      <code>recipes.json</code> <span class="t">zweryfikowany kod (testy w sandboksie), score</span><br>
+      <code>lessons.json</code> <span class="t">lekcje z porażek (tekst, nigdy kod)</span><br>
+      <code>policies.json</code> / <code>policy_codes.json</code> <span class="t">parametry + kod eksploracji</span><br>
+      <code>trees/</code> <span class="t">drzewa snów (replay offline)</span><br>
+      <code>events.jsonl</code> <span class="t">dziennik: task, cycle, api_calls → audyt</span>
+    </div>
+    <div class="box"><b>gdzie leży (your server)</b><br>
+      produkcyjna: <code><hermes-compose-dir>/data/dream-rsi/.dream_rsi/</code> <span class="t">(mount /opt/data — przeżywa rebuild)</span><br>
+      benchmark: <code>open-dream-rsi/.bench_real/</code> <span class="t">(ślad pomiaru, poza prod)</span><br>
+      repo w kontenerze: mount <code>:ro</code> + <code>PYTHONPATH</code> <span class="t">(zero pip w obrazie)</span>
+    </div>
+    <div class="box"><b>pętla</b><br>
+      <span class="t">task+testy → drzewo snów → sandbox weryfikuje → tylko zweryfikowane trafia do recipes → kolejny task tej samej kategorii startuje z recipe (kompresja wywołań)</span>
+    </div>
+  </div>
+</div>
+<div class="legend">Współdzielenie: ten sam katalog pamięci można zamontować kilku hostom (SSHFS/tailnet) — jeden dreamer, wielu konsumentów. Wszelka weryfikacja kodu dzieje się w <code>python -I</code> subprocess z czyszczonym env — nigdy w procesie serwera.</div>
+</body></html>
