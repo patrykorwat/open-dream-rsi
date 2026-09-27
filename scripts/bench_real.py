@@ -126,7 +126,9 @@ class EndpointDown(RuntimeError):
 def _probe(base_url: str) -> None:
     import urllib.request
     try:
-        with urllib.request.urlopen(base_url.rstrip("/") + "/models", timeout=10):
+        u = base_url.rstrip("/")
+        url = (u + "/models") if u.endswith("/v1") else (u + "/v1/models")
+        with urllib.request.urlopen(url, timeout=10):
             return
     except Exception as exc:
         raise EndpointDown(str(exc)) from exc
@@ -171,7 +173,9 @@ def run_task(task: Task, memory_dir: str, args, label: str) -> Dict[str, Any]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base-url", default="http://127.0.0.1:8000/v1")
+    ap.add_argument("--base-url", default=None,
+                    help="OpenAI-compatible base; default: $OPENAI_BASE_URL "
+                         "or http://127.0.0.1:8000/v1")
     ap.add_argument("--model", required=True)
     ap.add_argument("--budget", type=int, default=6)
     ap.add_argument("--thinking", action="store_true",
@@ -181,6 +185,8 @@ def main() -> int:
     ap.add_argument("--categories", default=",".join(SUITE))
     args = ap.parse_args()
     import os
+    args.base_url = (args.base_url or os.environ.get("OPENAI_BASE_URL")
+                     or "http://127.0.0.1:8000/v1")
     os.environ.setdefault("OPENAI_BASE_URL", args.base_url)
     os.environ.setdefault("OPENAI_API_KEY", "bench")
 
