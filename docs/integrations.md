@@ -265,6 +265,60 @@ use Hermes' own model through the protocol instead of config-file
 resolution, that is the one host where it works; today ODR does not request
 sampling (it resolves the endpoint itself).
 
+### Hermes in Docker (server/container setup)
+
+The stdio MCP server is spawned **inside** the Hermes container, so the
+host mount + one ENV make it work without any pip layer in the image:
+
+1. Put the repo on the Docker host, e.g. `git clone git@github.com:patrykorwat/open-dream-rsi.git ~/git/open-dream-rsi`.
+2. Mount it read-only into the container and export `PYTHONPATH` (in the
+   Dockerfile once, so every service inherits it):
+
+   ```dockerfile
+   ENV PYTHONPATH=/opt/open-dream-rsi
+   ```
+
+   ```yaml
+   # compose.yaml -> services.hermes
+   volumes:
+     - /home/USER/git/open-dream-rsi:/opt/open-dream-rsi:ro
+     - ./data:/opt/data
+   ```
+
+   Read-only mount + `PYTHONPATH` is the whole integration — the package is
+   stdlib-only, no install step. Updating = `git pull` on the host + restart
+   the Hermes container (no image rebuild). If you prefer a self-contained
+   image instead of a mount, `RUN git clone … /opt/open-dream-rsi` in the
+   Dockerfile — at the cost of a rebuild per upstream change.
+3. Add the server to `~/.hermes/config.yaml` (on the host that is
+   `./data/config.yaml` of the compose project — it is bind-mounted at
+   `/opt/data`):
+
+   ```yaml
+   mcp_servers:
+     open-dream-rsi:
+       command: "python3"
+       args: ["-m", "open_dream_rsi", "mcp",
+              "--tasks", "/opt/data/dream-rsi/tasks.json",
+              "--memory", "/opt/data/dream-rsi/.dream_rsi"]
+       timeout: 300
+       env:
+         # the container has no goose config, so point the dreamer straight
+         # at your OpenAI-compatible endpoint (vLLM/Ollama/proxy):
+         OPENAI_BASE_URL: "http://YOUR-HOST-IP:8000/v1"
+         OPENAI_API_KEY: "***"
+   ```
+
+   Paths under `/opt/data` persist with the Hermes data volume — the dreamer
+   remembers everything across rebuilds. `OPENAI_API_KEY` may be any token
+   for vLLM/Ollama; the zero-config chain would otherwise fall back to
+   localhost:8000, which does not exist inside a bridge network.
+4. Restart the container. Verify without a chat session (inside the
+   container or via a throwaway `docker compose run --rm hermes bash`):
+   `python3 -c "import open_dream_rsi; print('ok')"` and the JSON-RPC
+   handshake (`printf … | python3 -m open_dream_rsi mcp`, see Troubleshooting
+   elsewhere in this doc).
+
 ### Codex CLI
 
 ```bash
