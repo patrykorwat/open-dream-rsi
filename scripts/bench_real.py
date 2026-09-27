@@ -5,7 +5,7 @@ learned a category, how many API calls does the NEXT task of that category
 cost? Same model, same prompts, same machine as a normal session — only the
 memory differs.
 
-    python3 scripts/bench_real.py --base-url http://YOUR-HOST-IP:8000/v1 \
+    python3 scripts/bench_real.py --base-url http://YOUR-VLLM-HOST:8000/v1 \
         --model local-inference-lab/Qwen3.8-Flash-Next-NVFP4 [--reps 1]
 
 Protocol (per category):

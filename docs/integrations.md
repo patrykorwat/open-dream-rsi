@@ -119,7 +119,7 @@ Tip — let OpenCode consult the loop proactively: add to your project
       (one endpoint, no key duplication)
 ```
 
-Data placement on this setup (your server, Hermes container):
+Data placement (example deployment):
 
 | data | host path | notes |
 |---|---|---|
@@ -343,7 +343,7 @@ host mount + one ENV make it work without any pip layer in the image:
        env:
          # the container has no goose config, so point the dreamer straight
          # at your OpenAI-compatible endpoint (vLLM/Ollama/proxy):
-         OPENAI_BASE_URL: "http://YOUR-HOST-IP:8000/v1"
+         OPENAI_BASE_URL: "http://YOUR-VLLM-HOST:8000/v1"
          OPENAI_API_KEY: "***"
    ```
 

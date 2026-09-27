@@ -20,7 +20,7 @@
   <div class="col">
     <div class="box host"><b>Hosty-agentów</b><br>
       <span class="tag">Mac</span> goose (desktop) · claude/codex CLI<br>
-      <span class="tag">your server</span> Hermes w kontenerze <hermes-image><br>
+      <span class="tag">server</span> Hermes w kontenerze <hermes-image><br>
       <span class="tag">cloud</span> Cowork → <code>mcp --http</code> + tunnel<br>
       <span class="t">każdy spawnia: <code>python3 -m open_dream_rsi mcp</code></span>
     </div>
@@ -42,7 +42,7 @@
       <code>trees/</code> <span class="t">drzewa snów (replay offline)</span><br>
       <code>events.jsonl</code> <span class="t">dziennik: task, cycle, api_calls → audyt</span>
     </div>
-    <div class="box"><b>gdzie leży (your server)</b><br>
+    <div class="box"><b>gdzie leży on your server</b><br>
       produkcyjna: <code><hermes-compose-dir>/data/dream-rsi/.dream_rsi/</code> <span class="t">(mount /opt/data — przeżywa rebuild)</span><br>
       benchmark: <code>open-dream-rsi/.bench_real/</code> <span class="t">(ślad pomiaru, poza prod)</span><br>
       repo w kontenerze: mount <code>:ro</code> + <code>PYTHONPATH</code> <span class="t">(zero pip w obrazie)</span>
