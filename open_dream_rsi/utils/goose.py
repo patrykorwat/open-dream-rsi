@@ -173,10 +173,6 @@ def _compose_openai_base(host: str, base_path: str) -> str:
     return host + bp
 
 
-def _is_local(base_url: str) -> bool:
-    return any(h in base_url for h in ("127.0.0.1", "://localhost", "//[::1]"))
-
-
 # ---------------------------------------------------------------------------
 # Key discovery (files > env > macOS keychain)
 # ---------------------------------------------------------------------------
@@ -332,11 +328,10 @@ def resolve_goose(
         # goose desktop app convention for custom providers: <NAME>_API_KEY
         key_env = f"{provider.replace('-', '_').replace('.', '_').upper()}_API_KEY"
     key, source = _find_key(key_env or _KEY_ENV_BY_ENGINE[engine], api_key, secrets, env)
-    if key is None and (custom or provider in providers_block or provider.startswith("custom_")):
-        # try the plain engine key as last resort (shared credentials)
-        key, source = _find_key(_KEY_ENV_BY_ENGINE[engine], api_key, secrets, env)
-    if key is None and engine != "anthropic" and _is_local(resolved_base):
-        key, source = "local", "local-endpoint"  # vLLM/Ollama accept any bearer
+    if key is None and engine in ("openai", "ollama"):
+        # vLLM/Ollama/LM Studio accept any bearer token, wherever they live
+        # (localhost or LAN). Anthropic upstreams still need a real key.
+        key, source = "local", "dummy-for-openai-compatible"
 
     return ResolvedUpstream(
         provider=provider, engine=engine, model=model, base_url=resolved_base,

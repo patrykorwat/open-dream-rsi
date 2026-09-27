@@ -130,18 +130,52 @@ def tool_odr_add_task(args: Dict[str, Any]) -> Dict[str, Any]:
             "tasks_file": str(path)}
 
 
+def _default_provider() -> str:
+    """Zero-configuration provider chain for harness-spawned servers.
+
+    Precedence: ODR_LLM_PRESET > OPENAI_* env (proxy/direct) > goose's own
+    model (desktop/CLI config on this machine) > local vLLM/Ollama default.
+    A goose/Claude/Codex/Hermes-spawned MCP server often gets a scrubbed
+    environment — the goose resolver reads config files instead of env, so
+    the dreamer still borrows the host's brain without any setup.
+    """
+    if os.environ.get("ODR_LLM_PRESET"):
+        return os.environ["ODR_LLM_PRESET"]
+    if os.environ.get("OPENAI_BASE_URL") or os.environ.get("OPENAI_API_KEY"):
+        return "openai"
+    try:
+        from open_dream_rsi.utils.goose import goose_available
+
+        if goose_available():
+            return "goose"
+    except Exception:
+        pass
+    return "local"
+
+
+def _is_official_endpoint(base_url: str) -> bool:
+    return any(h in base_url for h in ("api.openai.com", "api2.cursor.sh"))
+
+
 def tool_odr_run_once(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Run one full improvement cycle (online attempts + offline dreaming)."""
+    """Run one full improvement cycle (online attempts + offline dreaming).
+
+    Works with no arguments at all: provider/model resolve automatically, an
+    empty task queue is a benign no-op, and self-hosted endpoints default to
+    disabled hidden reasoning (which otherwise eats the completion budget —
+    the client self-heals if an endpoint rejects the flag).
+    """
     from open_dream_rsi.cli import _build_client
     from open_dream_rsi.loop import AutoRSIRuntime, Task
     from open_dream_rsi.memory import DreamMemory
 
     path = _tasks_path(args)
-    if not path.exists():
-        raise ValueError(f"task file not found: {path} (use odr_add_task first)")
+    if not path.exists():  # first run: an empty queue is a no-op, not an error
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("[]", encoding="utf-8")
     tasks = [Task(**t) for t in json.loads(path.read_text(encoding="utf-8"))]
-    provider = args.get("provider") or os.environ.get("ODR_LLM_PRESET", "openai")
-    if provider == "mock":  # key-free smoke test of the whole pipeline
+    provider = args.get("provider") or _default_provider()
+    if provider == "mock" or not tasks:  # key-free smoke test / nothing to do
         from open_dream_rsi.llm import StubClient
 
         client = StubClient()
@@ -149,10 +183,12 @@ def tool_odr_run_once(args: Dict[str, Any]) -> Dict[str, Any]:
         client = _build_client(provider, args.get("model"))
         # Reasoning models spend the completion budget on hidden thinking and
         # the endpoint can take minutes per call — let harnesses tune both.
-        timeout = float(args.get("timeout", 300))
         if hasattr(client, "config"):
-            client.config.timeout = timeout
-            if args.get("no_thinking"):
+            client.config.timeout = float(args.get("timeout", 300))
+            no_thinking = args.get("no_thinking")
+            if no_thinking is None:  # auto: on for self-hosted, off for SaaS
+                no_thinking = not _is_official_endpoint(client.config.base_url)
+            if no_thinking:
                 client.config.extra_payload.setdefault(
                     "chat_template_kwargs", {})["enable_thinking"] = False
     runtime = AutoRSIRuntime(
@@ -166,7 +202,11 @@ def tool_odr_run_once(args: Dict[str, Any]) -> Dict[str, Any]:
         # expansion leaves dead idea families. Harnesses can opt out.
         enable_thoughts=bool(args.get("thoughts", True)),
     )
-    return runtime.run_once().to_dict()
+    report = runtime.run_once().to_dict()
+    if not tasks:
+        report["note"] = ("task queue is empty — queue a task with "
+                          "odr_add_task first, then call odr_run_once again")
+    return report
 
 
 # ---------------------------------------------------------------------------
@@ -211,11 +251,16 @@ TOOLS: Dict[str, Dict[str, Any]] = {
     },
     "odr_run_once": {
         "description": "Run one Dream-RSI cycle over the queued tasks now (online LLM "
-                       "attempts + offline dreaming, thought-conditioned branching "
-                       "on by default). Returns a solve/budget report.",
-        "inputSchema": {"type": "object", "properties": {
+                       "attempts + offline dreaming). No arguments needed: the LLM "
+                       "endpoint auto-resolves (env vars, then the local goose config, "
+                       "then localhost vLLM/Ollama) and reasoning models run with "
+                       "hidden thinking disabled on self-hosted endpoints. Returns a "
+                       "solve/budget report.",
+        "inputSchema": {
+            "type": "object", "properties": {
             "tasks_file": {"type": "string"}, "memory": {"type": "string"},
-            "provider": {"type": "string", "enum": ["openai", "cursor", "local", "goose", "mock"]},
+            "provider": {"type": "string", "enum": ["openai", "cursor", "local", "goose", "mock"],
+                         "description": "defaults to auto-detection; only override to force"},
             "model": {"type": "string"},
             "thoughts": {"type": "boolean",
                          "description": "thought-conditioned branching (default true)"},
@@ -316,18 +361,96 @@ def serve(stdin=None, stdout=None) -> None:
             stdout.flush()
 
 
+# ---------------------------------------------------------------------------
+# Streamable HTTP transport (Claude Cowork / claude.ai connectors / web)
+# ---------------------------------------------------------------------------
+
+
+def make_http_handler():
+    """Minimal stateless Streamable-HTTP MCP endpoint (POST /mcp).
+
+    Each POST carries one JSON-RPC message and gets one JSON response —
+    legal per the MCP spec's stateless mode and enough for tool-calling
+    connectors (initialize -> tools/list -> tools/call). Bind to a public
+    interface only behind your own tunnel/auth.
+    """
+    from http.server import BaseHTTPRequestHandler
+
+    class HttpHandler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def _json(self, code: int, payload) -> None:
+            raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_GET(self):  # noqa: N802
+            path = self.path.split("?")[0]
+            if path in ("/health", "/mcp/health"):
+                self._json(200, {"status": "ok", "server": SERVER_NAME,
+                                 "tools": list(TOOLS)})
+            else:
+                self._json(405, {"error": "POST JSON-RPC to /mcp"})
+
+        def do_POST(self):  # noqa: N802
+            if self.path.split("?")[0] not in ("/mcp", "/"):
+                self._json(404, {"error": "post JSON-RPC to /mcp"})
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                request = json.loads(self.rfile.read(length).decode("utf-8"))
+            except (ValueError, json.JSONDecodeError):
+                self._json(400, {"error": "invalid JSON"})
+                return
+            response = handle_request(request)
+            if response is None:  # notification
+                self.send_response(202)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            self._json(200, response)
+
+        def log_message(self, format, *args):  # noqa: A002
+            pass
+
+    return HttpHandler
+
+
+def serve_http(host: str = "127.0.0.1", port: int = 8800):
+    from http.server import ThreadingHTTPServer
+
+    return ThreadingHTTPServer((host, port), make_http_handler())
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog="odr-mcp", description="Open Dream-RSI MCP stdio server")
+        prog="odr-mcp", description="Open Dream-RSI MCP server (stdio or HTTP)")
     parser.add_argument("--memory", default=None, help="memory dir (default $ODR_MEMORY)")
     parser.add_argument("--tasks", default=None, help="task file (default $ODR_TASKS or tasks.json)")
+    parser.add_argument("--http", action="store_true",
+                        help="serve stateless Streamable-HTTP MCP (POST /mcp) instead "
+                             "of stdio — for claude.ai/Cowork connectors and web clients")
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="HTTP bind address (default loopback)")
+    parser.add_argument("--port", type=int, default=8800, help="HTTP port (default 8800)")
     args = parser.parse_args(argv)
     if args.memory:
         os.environ["ODR_MEMORY"] = args.memory
     if args.tasks:
         os.environ["ODR_TASKS"] = args.tasks
+    if args.http:
+        httpd = serve_http(args.host, args.port)
+        print(f"[odr mcp] HTTP on http://{args.host}:{args.port}/mcp", file=sys.stderr)
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\n[odr mcp] stopped.", file=sys.stderr)
+        return 0
     # Protocol stays on the real stdin/stdout; anything the library prints is
     # diverted to stderr so it cannot pollute the JSON-RPC channel.
     protocol_out = sys.stdout

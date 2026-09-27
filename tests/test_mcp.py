@@ -112,11 +112,15 @@ class ToolTests(unittest.TestCase):
         self.assertGreaterEqual(out["tasks_attempted"], 1)
         self.assertLessEqual(out["api_calls"], 10)
 
-    def test_run_once_without_task_file_is_a_clear_error(self):
+    def test_run_once_without_task_file_is_benign_noop(self):
+        # Zero-config contract: a missing/empty queue must not error — the
+        # harness can call odr_run_once before anything was ever queued.
         res = tool("odr_run_once", {"tasks_file": str(Path(self.tmp.name) / "nope.json"),
                                     "memory": self.memory, "provider": "mock"})
-        self.assertTrue(res["result"]["isError"])
-        self.assertIn("task file not found", res["result"]["content"][0]["text"])
+        self.assertFalse(res["result"]["isError"])
+        out = json.loads(res["result"]["content"][0]["text"])
+        self.assertEqual(out["tasks_attempted"], 0)
+        self.assertIn("empty", out["note"])
 
     def test_unknown_tool_reports_error_not_crash(self):
         res = tool("nope", {})

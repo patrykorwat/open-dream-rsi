@@ -153,14 +153,24 @@ class OpenAICompatibleClient:
         max_tokens: int = 1024,
     ) -> str:
         """Send chat messages and return the assistant's reply text."""
-        payload = {
+        base_payload = {
             "model": model or self.config.model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
-            **self.config.extra_payload,
         }
-        data = self._post("/chat/completions", payload)
+        payload = {**base_payload, **self.config.extra_payload}
+        try:
+            data = self._post("/chat/completions", payload)
+        except LLMError as exc:
+            # Self-heal: endpoints that reject the extra payload (e.g. do not
+            # accept chat_template_kwargs) get one retry with the plain
+            # OpenAI body, and the extra flags stay dropped this session.
+            if self.config.extra_payload and "HTTP 400" in str(exc):
+                self.config.extra_payload.clear()
+                data = self._post("/chat/completions", base_payload)
+            else:
+                raise
         try:
             message = data["choices"][0]["message"]
         except (KeyError, IndexError) as exc:  # unexpected response shape

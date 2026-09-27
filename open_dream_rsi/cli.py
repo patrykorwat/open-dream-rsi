@@ -162,10 +162,15 @@ def main(argv: list[str] | None = None) -> int:
 
     mcp = sub.add_parser(
         "mcp",
-        help="serve the loop as an MCP stdio server (OpenCode / Goose / Claude Code)")
+        help="serve the loop as an MCP server (stdio for OpenCode/Goose/Claude "
+             "Code/Codex/Hermes; --http for claude.ai/Cowork connectors)")
     mcp.add_argument("--tasks", default=None, help="task file (default $ODR_TASKS or tasks.json)")
     mcp.add_argument("--memory", default=None,
                      help="memory dir (default $ODR_MEMORY or .dream_rsi)")
+    mcp.add_argument("--http", action="store_true",
+                     help="serve stateless Streamable-HTTP MCP on POST /mcp")
+    mcp.add_argument("--host", default="127.0.0.1")
+    mcp.add_argument("--port", type=int, default=8800)
     mcp.set_defaults(func=cmd_mcp)
 
     proxy = sub.add_parser(
@@ -196,6 +201,8 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         argv += ["--tasks", args.tasks]
     if args.memory:  # --memory is a top-level flag; forward it explicitly
         argv += ["--memory", args.memory]
+    if args.http:
+        argv += ["--http", "--host", args.host, "--port", str(args.port)]
     return mcp_main(argv)
 
 

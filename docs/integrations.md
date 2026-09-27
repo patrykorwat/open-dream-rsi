@@ -219,17 +219,98 @@ first-class ways to run the dreamer on **exactly the model goose uses**:
    </dict></plist>
    ```
 
-## Any other MCP client (Claude Code, Cursor, Zed, …)
+## Any other MCP client (Hermes, Codex, Claude Code, Cowork, Zed, …)
 
-Register a **stdio MCP server** with command:
+### Zero configuration (all of them)
 
-    python3 -m open_dream_rsi mcp
+Since 0.2 the server needs **no LLM setup at all**. `odr_run_once` resolves
+the brain automatically, in this order:
 
-Optional flags/env: `--tasks <file>` (or `ODR_TASKS`), `--memory <dir>` (or
-`ODR_MEMORY`). One memory dir per improving instance — share it between the
-MCP server and a long-running `python -m open_dream_rsi loop` so the harness
-sees exactly what the daemon has learned (that is the recommended setup:
-the daemon dreams, the harness queries).
+1. `OPENAI_BASE_URL` / `OPENAI_API_KEY` in the server's environment
+   (e.g. pointed at the `proxy`),
+2. **your local goose config** (`~/.config/goose`: `active_provider` +
+   `providers:` block + `custom_providers/*.json` + `secrets.yaml` + macOS
+   keychain) — read from disk, so it survives the env scrubbing that
+   Hermes/Codex/Claude Code apply to spawned servers,
+3. `http://127.0.0.1:8000/v1` (vLLM/Ollama default).
+
+Self-hosted endpoints additionally run with hidden reasoning disabled
+(`chat_template_kwargs.enable_thinking=false`) by default — endpoints that
+reject the flag get a clean automatic retry without it. An empty task queue
+is a benign no-op with a hint, never an error. So: register the server,
+restart the client, and the first message that says "run one Dream-RSI
+cycle" just works — no prompts to babysit, no keys to copy.
+
+The five tools are registered prefixed per client (e.g. Hermes
+`mcp_open_dream_rsi_odr_run_once`).
+
+### Hermes Agent
+
+Add under `mcp_servers` in `~/.hermes/config.yaml` (or via the dashboard's
+MCP catalog):
+
+```yaml
+mcp_servers:
+  open-dream-rsi:
+    command: "python3"
+    args: ["-m", "open_dream_rsi", "mcp",
+           "--tasks", "/ABSOLUTE/PATH/open-dream-rsi/tasks.json",
+           "--memory", "/ABSOLUTE/PATH/open-dream-rsi/.dream_rsi"]
+    timeout: 300
+```
+
+Restart Hermes. Tools appear as `mcp_open_dream_rsi_*` in every platform
+toolset. Hermes also supports MCP **sampling** — if you want the dreamer to
+use Hermes' own model through the protocol instead of config-file
+resolution, that is the one host where it works; today ODR does not request
+sampling (it resolves the endpoint itself).
+
+### Codex CLI
+
+```bash
+codex mcp add open-dream-rsi -- python3 -m open_dream_rsi mcp \
+  --tasks /ABSOLUTE/PATH/open-dream-rsi/tasks.json \
+  --memory /ABSOLUTE/PATH/open-dream-rsi/.dream_rsi
+```
+
+(equivalently `[mcp_servers.open-dream-rsi]` with `command`/`args` in
+`~/.codex/config.toml`). Verify with `codex mcp list`.
+
+### Claude Code
+
+```bash
+claude mcp add open-dream-rsi -- python3 -m open_dream_rsi mcp \
+  --tasks /ABSOLUTE/PATH/open-dream-rsi/tasks.json \
+  --memory /ABSOLUTE/PATH/open-dream-rsi/.dream_rsi
+```
+
+Check with `/mcp` inside a session.
+
+### Claude Cowork / claude.ai connectors (remote only)
+
+Cowork connects to **remote** MCP URLs (the connection is brokered from
+Anthropic's cloud; local stdio is not available there). Run the server in
+its HTTP mode and expose it through your own tunnel:
+
+```bash
+python3 -m open_dream_rsi mcp --http --host 0.0.0.0 --port 8800 \
+  --tasks /ABS/PATH/tasks.json --memory /ABS/PATH/.dream_rsi
+# then tunnel 8800 (tailscale funnel / cloudflared) and add the public
+# https URL as a custom connector (Settings -> Connectors -> Add custom)
+```
+
+The endpoint implements the stateless Streamable-HTTP profile
+(`POST /mcp`, one JSON-RPC message per request; `GET /health`).
+**Treat the URL as a credential**: whoever reaches it can queue tasks and
+spend your LLM budget — keep the tunnel private and share it only when
+you mean to.
+
+Optional flags/env (any client): `--tasks <file>` (or `ODR_TASKS`),
+`--memory <dir>` (or `ODR_MEMORY`). One memory dir per improving instance —
+share it between the MCP server and a long-running
+`python -m open_dream_rsi loop` so the harness sees exactly what the daemon
+has learned (that is the recommended setup: the daemon dreams, the harness
+queries).
 
 ## Troubleshooting
 

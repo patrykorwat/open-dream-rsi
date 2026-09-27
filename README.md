@@ -183,11 +183,14 @@ OpenAI server: `examples/live_loop_demo.py`.
 
 ---
 
-## 🔌 Plug into OpenCode / Goose / any MCP harness
+## 🔌 Plug into Goose / Hermes / Codex / Claude Code / OpenCode / Cowork
 
-The loop speaks **MCP over stdio** — one config block in OpenCode or Goose
-and your everyday coding agent can queue tasks for the dreamer, pull back
-verified recipes and consult the curated lessons:
+The loop speaks **MCP** — stdio for local agents (Goose, Hermes, Codex CLI,
+Claude Code, OpenCode, Zed), Streamable-HTTP (`mcp --http`) for remote
+connectors (Claude Cowork / claude.ai). One config block and your everyday
+coding agent can queue tasks for the dreamer, pull back verified recipes and
+consult the curated lessons — with **zero LLM setup**: the dreamer resolves
+the brain itself (env vars → your local goose config → localhost vLLM).
 
 ```bash
 # OpenCode: add to opencode.json      Goose: add to ~/.config/goose/config.yaml
