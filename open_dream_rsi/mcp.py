@@ -147,11 +147,20 @@ def tool_odr_run_once(args: Dict[str, Any]) -> Dict[str, Any]:
         client = StubClient()
     else:
         client = _build_client(provider, args.get("model"))
+        # Reasoning models spend the completion budget on hidden thinking and
+        # the endpoint can take minutes per call — let harnesses tune both.
+        timeout = float(args.get("timeout", 300))
+        if hasattr(client, "config"):
+            client.config.timeout = timeout
+            if args.get("no_thinking"):
+                client.config.extra_payload.setdefault(
+                    "chat_template_kwargs", {})["enable_thinking"] = False
     runtime = AutoRSIRuntime(
         client=client,
         memory=DreamMemory(_memory_root(args)),
         tasks=tasks,
         api_call_budget=int(args.get("budget", 10)),
+        max_tokens=int(args.get("max_tokens", 4096)),
         # Thought-conditioned branching ships ON (library default): attempts
         # record their PLAN line, proposals see the tried-idea ledger, and
         # expansion leaves dead idea families. Harnesses can opt out.
@@ -210,6 +219,16 @@ TOOLS: Dict[str, Dict[str, Any]] = {
             "model": {"type": "string"},
             "thoughts": {"type": "boolean",
                          "description": "thought-conditioned branching (default true)"},
+            "max_tokens": {"type": "integer",
+                           "description": "completion budget per LLM call (default 4096; "
+                                          "raise for reasoning models)"},
+            "timeout": {"type": "number",
+                        "description": "seconds per LLM call (default 300; slow local "
+                                       "reasoning models need this)"},
+            "no_thinking": {"type": "boolean",
+                            "description": "disable hidden reasoning via "
+                                           "chat_template_kwargs (vLLM Qwen builds; "
+                                           "much faster, often better code)"},
             "budget": {"type": "integer", "description": "Max API calls (default 10)"}}},
         "fn": tool_odr_run_once,
     },

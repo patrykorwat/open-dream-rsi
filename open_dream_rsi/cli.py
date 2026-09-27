@@ -22,7 +22,22 @@ def _build_client(provider: str, model: str | None):
     cfg = LLMConfig.from_preset(provider)  # honours OPENAI_BASE_URL / ODR_LLM_MODEL
     if model:
         cfg.model = model
+    _apply_no_thinking(cfg)
     return OpenAICompatibleClient(cfg)
+
+
+def _apply_no_thinking(cfg) -> None:
+    """ODR_LLM_NO_THINKING=1: ask vLLM chat templates to skip hidden reasoning.
+
+    Reasoning models (Qwen3.x builds) can burn the whole completion budget on
+    thinking and return empty content; disabling it made a real Spark run go
+    from timeout to a correct answer in 19s. Applied only to OpenAI-compatible
+    clients that accept chat_template_kwargs.
+    """
+    import os
+
+    if os.environ.get("ODR_LLM_NO_THINKING", "").lower() in ("1", "true", "yes"):
+        cfg.extra_payload.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
 
 
 def cmd_loop(args: argparse.Namespace) -> int:

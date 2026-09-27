@@ -71,6 +71,7 @@ class LLMConfig:
     model: str = "gpt-4o-mini"
     api_key_env: Optional[str] = None
     extra_headers: Dict[str, str] = field(default_factory=dict)
+    extra_payload: Dict[str, Any] = field(default_factory=dict)
     timeout: float = DEFAULT_TIMEOUT
 
     @classmethod
@@ -157,6 +158,7 @@ class OpenAICompatibleClient:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            **self.config.extra_payload,
         }
         data = self._post("/chat/completions", payload)
         try:
