@@ -149,7 +149,7 @@ def run_task(task: Task, memory_dir: str, args, label: str) -> Dict[str, Any]:
             time.sleep(20)
     client = _build_client("local", args.model)
     if hasattr(client, "config"):
-        client.config.timeout = 300.0
+        client.config.timeout = args.client_timeout
         client.config.extra_payload.setdefault(
             "chat_template_kwargs", {})["enable_thinking"] = not args.thinking
     t0 = time.time()
@@ -182,6 +182,11 @@ def main() -> int:
     ap.add_argument("--budget", type=int, default=6)
     ap.add_argument("--thinking", action="store_true",
                     help="keep hidden reasoning ON (default: off, as in normal use)")
+    ap.add_argument("--client-timeout", type=float, default=900.0,
+                    help="per-call HTTP timeout in seconds (default 900: a "
+                         "shared, loaded vLLM queues long prompts past the old "
+                         "300s cap and every queued call became a false "
+                         "timeout failure)")
     ap.add_argument("--reps", type=int, default=1, help="repeats per eval task")
     ap.add_argument("--out", default="bench_real_results.json")
     ap.add_argument("--resume", action="store_true",
