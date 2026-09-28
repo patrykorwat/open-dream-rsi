@@ -74,7 +74,7 @@ The five tools the agent sees:
 | `odr_status` | what the loop has learned (policies, recipes, events) |
 | `odr_recipes` | best **verified** solution for a category — use as warm start |
 | `odr_lessons` | curated failure lessons for a category / search query |
-| `odr_add_task` | queue a task (prompt + tests) for the dreamer |
+| `odr_add_task` | queue a task (prompt + tests, or prompt + criteria) for the dreamer — test-less tasks are completion-judged |
 | `odr_run_once` | run one improvement cycle now (bounded API budget) |
 
 `odr_run_once` runs with **thought-conditioned branching enabled by

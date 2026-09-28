@@ -56,6 +56,7 @@ def cmd_loop(args: argparse.Namespace) -> int:
         enable_policy_code=not args.no_policy_code,
         enable_knowledge=not args.no_knowledge,
         enable_thoughts=not args.no_thoughts,
+        enable_judge=not args.no_judge,
     )
     if args.once:
         report = runtime.run_once()
@@ -119,6 +120,10 @@ def main(argv: list[str] | None = None) -> int:
                       help="disable thought-conditioned branching (PLAN lines, "
                            "tried-idea ledger, semantic stagnation steering; "
                            "on by default)")
+    loop.add_argument("--no-judge", action="store_true",
+                      help="disable the LLM completion judge for test-less "
+                           "tasks (such tasks then always verdict unsolved; "
+                           "tasks WITH tests are never judged)")
     loop.add_argument("--interval", type=float, default=300.0, help="seconds between cycles")
     loop.add_argument("--cycles", type=int, default=None, help="stop after N cycles")
     loop.add_argument("--once", action="store_true", help="single cycle (for cron)")

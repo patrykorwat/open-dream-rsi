@@ -44,10 +44,11 @@ from open_dream_rsi.core.policygen import (
     greedy_replay_score,
     outcome_map,
 )
+from open_dream_rsi.core.judge import LLMJudge
 from open_dream_rsi.core.simulator import ReplaySimulator
 from open_dream_rsi.core.tree import DiscoveryTree
 from open_dream_rsi.memory import DreamMemory
-from open_dream_rsi.tools import CodeVerifier
+from open_dream_rsi.tools import CodeVerifier, ToolResult
 
 CANDIDATE_SYSTEM_PROMPT = (
     "You are a code-improvement agent in an autonomous recursive "
@@ -100,6 +101,9 @@ class Task:
     prompt: str
     tests: List[Dict[str, Any]]
     max_attempts: int = 4
+    #: Optional success criterion for test-less tasks: consulted by the
+    #: completion judge when tests are empty (tests always dominate).
+    criteria: str = ""
 
 
 #: Minimum new replay steps required before re-asking the LLM for a policy
@@ -154,6 +158,7 @@ class AutoRSIRuntime:
         thought_steering: bool = True,
         explore_epsilon: float = 0.15,
         rng_seed: int = 0,
+        enable_judge: bool = True,
     ):
         self.client = client
         self.memory = memory
@@ -171,6 +176,10 @@ class AutoRSIRuntime:
         # passes hidden tests) monopolises the budget forever and the
         # recorded world never contains the evidence the replay gate needs.
         self.explore_epsilon = explore_epsilon
+        # Automatic completion verdicts for test-less tasks (tests always
+        # dominate; the judge never overrides a failing verifier).
+        self.enable_judge = enable_judge
+        self._judge = LLMJudge(client, max_tokens=256) if enable_judge else None
         self._rng = random.Random(rng_seed)
         # Section-3 "dreaming with code": the LLM rewrites the exploration
         # policy itself; promoted candidates steer tree expansion online.
@@ -278,7 +287,14 @@ class AutoRSIRuntime:
             report.api_calls += 1
             if code is None:
                 continue
-            result = self.verifier.run(code, task.tests)
+            if task.tests:
+                result = self.verifier.run(code, task.tests)
+            elif self.enable_judge:
+                result = self._judge_attempt(task, code, report)
+            else:
+                result = ToolResult(False, 0.0,
+                                    "task has no tests and the completion "
+                                    "judge is disabled")
             self._emit("verification", task_id=task.task_id, category=category,
                        score=round(result.score, 3), ok=result.ok,
                        errors=result.detail if isinstance(result.detail, (list, str)) else str(result.detail),
@@ -430,6 +446,34 @@ class AutoRSIRuntime:
         if not unlabeled:
             return None
         return max(unlabeled, key=rank)["node_id"]
+
+    def _judge_attempt(self, task: Task, code: str,
+                       report: CycleReport) -> ToolResult:
+        """Verdict for a test-less attempt: sandbox smoke-run as evidence,
+        LLM judge as arbiter. The judge call is budget-charged like any other;
+        a budget-starved cycle fails closed (no verdict -> not solved)."""
+        if self.api_calls_used >= self.api_call_budget:
+            return ToolResult(False, 0.0, "judge skipped: budget exhausted")
+        smoke = self.verifier.smoke_run(code)
+        if not smoke["ok"]:
+            # Code does not even execute: no LLM call needed, hard fail,
+            # traceback goes straight into the feedback channel.
+            return ToolResult(False, 0.0, f"code does not execute: {smoke['error']}")
+        if self._judge is None:
+            return ToolResult(False, 0.0, "judge disabled")
+        evidence = (f"imports cleanly; defines: {', '.join(smoke['defined']) or '(nothing)'}; "
+                    f"stdout: {smoke['stdout'] or '(none)'}")
+        evidence += f"\nSandbox stdout:\n{smoke['stdout']}" if smoke["stdout"] else ""
+        self._emit("llm_call", task_id=task.task_id, category=task.category,
+                   call_kind="judge")
+        verdict = self._judge.judge(task.prompt, task.criteria, code, evidence)
+        self.api_calls_used += 1
+        report.api_calls += 1
+        self._emit("judge_verdict", task_id=task.task_id, category=task.category,
+                   solved=verdict["solved"], score=round(verdict["score"], 3),
+                   reason=verdict["reason"][:200])
+        return ToolResult(ok=verdict["solved"], score=verdict["score"],
+                          detail=verdict["reason"], solved=verdict["solved"])
 
     def _next_expansion(self, tree: DiscoveryTree, category: str) -> Optional[str]:
         """Pick the node to expand next — LLM-written policy if promoted, greedy else.

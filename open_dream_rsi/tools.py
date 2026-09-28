@@ -23,6 +23,7 @@ ns = {{}}
 report = {{"passed": 0, "total": len(tests), "errors": []}}
 try:
     exec(compile(candidate, "candidate.py", "exec"), ns)
+    report["defined"] = sorted(n for n in ns if not n.startswith("__"))
 except Exception:
     report["error"] = traceback.format_exc(limit=3)
     print(json.dumps(report)); sys.exit(0)
@@ -56,6 +57,42 @@ class CodeVerifier:
 
     def __init__(self, timeout: float = 10.0):
         self.timeout = timeout
+
+    def smoke_run(self, code: str) -> Dict[str, Any]:
+        """Execute candidate code for evidence only (no tests evaluated).
+
+        Returns {"ok", "error", "defined", "stdout"} — what the completion
+        judge uses as sandbox evidence for test-less tasks. Same isolation
+        boundary as :meth:`run`.
+        """
+        script = VERIFIER_TEMPLATE.format(candidate=code, tests=[])
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".py", delete=False, encoding="utf-8"
+        ) as fh:
+            fh.write(script)
+            path = fh.name
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-I", path],
+                capture_output=True, text=True, timeout=self.timeout,
+                env={"PATH": "/usr/bin:/bin"},
+                cwd=tempfile.gettempdir(),
+            )
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": "execution timed out",
+                    "defined": [], "stdout": ""}
+        finally:
+            Path(path).unlink(missing_ok=True)
+        line = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
+        try:
+            report = json.loads(line)
+        except (json.JSONDecodeError, IndexError):
+            return {"ok": False, "error": f"verifier crash: {proc.stderr[:300]!r}",
+                    "defined": [], "stdout": ""}
+        defined = report.get("defined", [])
+        return {"ok": "error" not in report, "error": report.get("error", ""),
+                "defined": defined,
+                "stdout": proc.stdout.replace(line, "").strip()[:500]}
 
     def run(self, code: str, tests: List[Dict[str, Any]]) -> ToolResult:
         script = VERIFIER_TEMPLATE.format(candidate=code, tests=tests)

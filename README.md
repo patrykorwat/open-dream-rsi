@@ -174,6 +174,13 @@ What makes it self-improving between runs (persistent `--memory` dir):
 * **Thought-conditioned branching** (on by default) — each attempt records its
   one-line `PLAN:`, proposals see the tried-idea ledger, and expansion leaves
   a branch whose idea keeps repeating itself (`--no-thoughts` to ablate).
+* **Completion judge** (on by default, `--no-judge` to ablate) — tasks queued
+  **without** tests (a `criteria` string instead) get an automatic verdict:
+  the sandbox first proves the code executes (hard fail without any LLM
+  call), then the frozen model judges the evidence against the criteria with
+  a strict-JSON, fail-closed protocol. Tests always dominate: the judge is
+  never consulted for test-bearing tasks and can never override a failing
+  verifier. Judge calls count against the same budget guard.
 * **Event log** (`events.jsonl`) — append-only audit of every decision.
 
 Guards: `--budget` caps API calls per cycle (dreaming stays free), candidate

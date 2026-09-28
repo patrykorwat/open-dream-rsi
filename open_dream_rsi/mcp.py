@@ -109,11 +109,19 @@ def tool_odr_add_task(args: Dict[str, Any]) -> Dict[str, Any]:
         "tests": args.get("tests"),
         "max_attempts": int(args.get("max_attempts", 4)),
     }
-    for field_name in ("task_id", "category", "prompt", "tests"):
+    if args.get("criteria"):
+        task["criteria"] = str(args["criteria"])
+    for field_name in ("task_id", "category", "prompt"):
         if not task[field_name]:
             raise ValueError(f"'{field_name}' is required")
-    if not isinstance(task["tests"], list) or not task["tests"]:
+    if not task.get("tests") and not task.get("criteria"):
+        raise ValueError("either 'tests' (non-empty list of {call, expected}) "
+                         "or 'criteria' (success description for the "
+                         "completion judge) is required")
+    if task.get("tests") and (not isinstance(task["tests"], list)
+                              or not task["tests"]):
         raise ValueError("'tests' must be a non-empty list of {call, expected}")
+    task.setdefault("tests", [])
 
     path = _tasks_path(args)
     existing: List[Dict[str, Any]] = []
@@ -238,15 +246,21 @@ TOOLS: Dict[str, Dict[str, Any]] = {
         "fn": tool_odr_lessons,
     },
     "odr_add_task": {
-        "description": "Queue a self-contained Python task (prompt + test cases) for the "
-                       "self-improvement loop. tests = [{'call': 'add(2, 3)', 'expected': 5}].",
+        "description": "Queue a self-contained Python task for the "
+                       "self-improvement loop. Prefer tests = "
+                       "[{'call': 'add(2, 3)', 'expected': 5}]; a task with "
+                       "no tests may instead give 'criteria' (success "
+                       "description) — an LLM judge then verdicts completion.",
         "inputSchema": {"type": "object", "properties": {
             "task_id": {"type": "string"}, "category": {"type": "string"},
             "prompt": {"type": "string"},
             "tests": {"type": "array", "items": {"type": "object"}},
+            "criteria": {"type": "string",
+                         "description": "success criterion for test-less "
+                                        "tasks (completion-judged)"},
             "max_attempts": {"type": "integer"},
             "tasks_file": {"type": "string"}},
-            "required": ["task_id", "category", "prompt", "tests"]},
+            "required": ["task_id", "category", "prompt"]},
         "fn": tool_odr_add_task,
     },
     "odr_run_once": {
