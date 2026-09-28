@@ -93,7 +93,16 @@ def forward_chat_completions(up: ResolvedUpstream, body: Dict[str, Any],
     if up.engine == "anthropic":
         return _forward_anthropic(up, payload, timeout)
 
+    # vLLM rejects stream_options when stream is not true ("Stream options
+    # can only be defined when stream=True", HTTP 400). Callers do this in
+    # the wild (Hermes >= 2026.9.28 with streaming off); the option is
+    # meaningless to us either way — buffered or not — so drop it.
+    if not payload.get("stream"):
+        payload.pop("stream_options", None)
+
     if payload.pop("stream", False):
+        # buffering makes stream_options illegal for vLLM (400) — drop it
+        payload.pop("stream_options", None)
         return _forward_openai_stream(up, payload, timeout)
 
     return _post_json(up.base_url.rstrip("/") + "/chat/completions",

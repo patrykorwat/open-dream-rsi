@@ -164,7 +164,7 @@ class ResolverTests(unittest.TestCase):
                 "    model: local-inference-lab/Qwen3.8-Flash-Next-NVFP4\n"
                 "    base_url: http://YOUR-HOST-IP:8000/v1\n", encoding="utf-8")
             (Path(tmp) / "secrets.yaml").write_text(
-                "CUSTOM_SPARK_27B7_API_KEY: abcsekret1", encoding="utf-8")
+                "CUSTOM_EXAMPLE_1_API_KEY: abcsekret1", encoding="utf-8")
             up = resolve_goose(tmp)
             self.assertEqual(up.engine, "openai")
             self.assertEqual(up.base_url, "http://YOUR-HOST-IP:8000/v1")
@@ -274,6 +274,24 @@ class ProxyTests(unittest.TestCase):
         # upstream saw the pinned GOOSE_MODEL + config's key, not the client's
         self.assertEqual(MOCK_LOG[-1]["body"]["model"], "gpt-4o-mini")
         self.assertEqual(MOCK_LOG[-1]["auth"], "Bearer sk-fak...e123")
+
+    def test_stream_options_never_reach_upstream(self):
+        # vLLM: "Stream options can only be defined when stream=True" (400).
+        # The proxy buffers streams, so stream_options must be dropped in
+        # BOTH paths: stream=True (option becomes illegal after buffering)
+        # and stream=False (illegal as sent).
+        self._with_config(host=self.up_base)
+        for body in (
+            {"model": "m", "messages": [{"role": "user", "content": "hi"}],
+             "stream_options": {"include_usage": True}},
+            {"model": "m", "messages": [{"role": "user", "content": "hi"}],
+             "stream": True, "stream_options": {"include_usage": True}},
+        ):
+            MOCK_LOG.clear()
+            status, data = self._post("/v1/chat/completions", body)
+            self.assertEqual(status, 200)
+            self.assertNotIn("stream_options", MOCK_LOG[-1]["body"])
+            self.assertNotIn("stream", MOCK_LOG[-1]["body"])
 
     def test_passthrough_models_keeps_caller_model(self):
         tmp = TemporaryDirectory(); self.addCleanup(tmp.cleanup)
