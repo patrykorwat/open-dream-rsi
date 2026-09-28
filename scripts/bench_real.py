@@ -186,8 +186,32 @@ def main() -> int:
     ap.add_argument("--out", default="bench_real_results.json")
     ap.add_argument("--resume", action="store_true",
                     help="keep existing --out results and skip completed runs")
-    ap.add_argument("--categories", default=",".join(SUITE))
+    ap.add_argument("--categories", default=None,
+                    help="comma list; default: all categories known after "
+                         "--suite-file is loaded")
+    ap.add_argument("--suite-file", default=None,
+                    help="external Python module exposing SUITE: a dict in "
+                         "the same {category: {train, eval}} shape as this "
+                         "script's built-in toy suite. Lets you keep "
+                         "domain-specific fixtures OUT of the repo. The "
+                         "module's directory is added to sys.path so it can "
+                         "import its own helper modules.")
     args = ap.parse_args()
+    if args.suite_file:
+        import importlib.util
+        mod_path = Path(args.suite_file).resolve()
+        sys.path.insert(0, str(mod_path.parent))
+        spec = importlib.util.spec_from_file_location("external_suite", mod_path)
+        if spec is None or spec.loader is None:
+            raise SystemExit(f"cannot load suite module: {mod_path}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        extra = getattr(mod, "SUITE", None)
+        if not isinstance(extra, dict):
+            raise SystemExit(f"{mod_path} must define a SUITE dict")
+        SUITE.update(extra)
+    if args.categories is None:
+        args.categories = ",".join(SUITE)
     import os
     args.base_url = (args.base_url or os.environ.get("OPENAI_BASE_URL")
                      or "http://127.0.0.1:8000/v1")
