@@ -169,6 +169,51 @@ Invalid code is additionally rejected by AST-level static validation (shape:
 \texttt{def choose\_action(frontier, step)}; no imports, no dunder access)
 before any process spawns. API keys never cross the sandbox wall.
 
+\subsection{Execution schemas}
+\label{sec:execution}
+
+A common question for deployment is whether the loop must be a
+continuously-running background process. It need not be: all improvement
+state lives in the persistent memory directory
+(\texttt{policies.json}, \texttt{policy\_codes.json}, \texttt{recipes.json},
+\texttt{lessons.json}, \texttt{trees/}, \texttt{events.jsonl}), so every
+execution mode below is resumable and interchangeable --- run $N{+}1$ always
+starts where run $N$ ended, regardless of who invoked it.
+
+\begin{itemize}
+  \item \hdr{Daemon (supervisor owns the clock).}
+  \texttt{odr loop --tasks tasks.json --interval 300} runs
+  \texttt{run\_forever}: wake $\rightarrow$ one budget-guarded cycle
+  (online attempts + offline dreaming + curation) $\rightarrow$ sleep
+  $\rightarrow$ repeat, until interrupted or \texttt{--cycles} is exhausted.
+  Cost per cycle is bounded by \texttt{--budget} (default 20 calls), so an
+  unattended daemon cannot overspend the endpoint.
+  \item \hdr{Scheduled (cron/systemd own the clock).}
+  \texttt{odr loop --once} executes exactly one cycle and exits. This is the
+  recommended production mode: the scheduler provides restart-on-failure,
+  logging, and calendar semantics, and memory persistence makes back-to-back
+  \texttt{--once} invocations equivalent to the daemon without a resident
+  process.
+  \item \hdr{On-demand (a harness owns the clock).}
+  \texttt{odr mcp} exposes the loop as five MCP-over-stdio tools
+  (\texttt{odr\_status}, \texttt{odr\_recipes}, \texttt{odr\_lessons},
+  \texttt{odr\_add\_task}, \texttt{odr\_run\_once}) to any MCP-speaking agent
+  harness (Hermes, Goose, OpenCode, Claude Code, Zed). The harness spawns the
+  server per session and \emph{stops it with the session}; between tool
+  calls the server is passive --- it holds no timer and polls nothing. An
+  everyday coding agent can therefore queue tasks for the dreamer and pull
+  back verified recipes without any always-on component: improvement happens
+  exactly when a harness (or cron) calls \texttt{odr\_run\_once}.
+  \item \hdr{Offline tools.} \texttt{odr bench} (two-arm API-efficiency
+  benchmark), \texttt{odr status} (what memory has learned), and
+  \texttt{odr dashboard} (live web view of the tree) run on demand against
+  the same memory directory.
+\end{itemize}
+
+The three clocks are thus decoupled by design: the \emph{learning loop}
+never needs a resident process, only a scheduler of some kind; the
+\texttt{events.jsonl} audit trail records which mode drove each cycle.
+
 \section{LLM-written exploration policies}
 \label{sec:policy}
 
