@@ -125,6 +125,27 @@ class EndpointDown(RuntimeError):
     """vLLM refused connections — the run is invalid, not a model failure."""
 
 
+class TempOverride:
+    """Client wrapper pinning chat temperature — proposals must be
+    deterministic for a cold-vs-warm delta to be attributable to memory
+    rather than to sampling noise."""
+
+    def __init__(self, client, temperature: float):
+        self._client = client
+        self.temperature = temperature
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+    def chat(self, messages, model=None, temperature=0.7, max_tokens=1024):
+        return self._client.chat(messages, model=model,
+                                 temperature=self.temperature,
+                                 max_tokens=max_tokens)
+
+    def complete(self, prompt, system=None, **kw):
+        return self._client.complete(prompt, system=system, **kw)
+
+
 def _probe(base_url: str) -> None:
     import urllib.request
     try:
@@ -152,12 +173,21 @@ def run_task(task: Task, memory_dir: str, args, label: str) -> Dict[str, Any]:
         client.config.timeout = args.client_timeout
         client.config.extra_payload.setdefault(
             "chat_template_kwargs", {})["enable_thinking"] = not args.thinking
+    if args.temperature is not None:
+        client = TempOverride(client, args.temperature)
     t0 = time.time()
+    # A warm arm only 'counts' as warm if the recipe (or lessons) actually
+    # exist in its memory at run start — record what the arm really had.
+    _mem_probe = DreamMemory(memory_dir)
+    recipe_at_start = _mem_probe.get_recipe(task.category) is not None
+    lessons_at_start = bool(_mem_probe.get_lessons(task.category))
     rt = AutoRSIRuntime(client=client, memory=DreamMemory(memory_dir),
                         tasks=[task], api_call_budget=args.budget,
                         max_tokens=4096)
     rep = rt.run_once().to_dict()
     rep.update(task_id=task.task_id, category=task.category, label=label,
+               recipe_at_start=recipe_at_start,
+               lessons_at_start=lessons_at_start,
                wall=round(time.time() - t0, 1))
     # A solve reached through connection failures is NOT the same evidence
     # as a clean solve — count llm_error events per task.
@@ -187,6 +217,11 @@ def main() -> int:
                          "shared, loaded vLLM queues long prompts past the old "
                          "300s cap and every queued call became a false "
                          "timeout failure)")
+    ap.add_argument("--temperature", type=float, default=None,
+                    help="pin proposal temperature for EVERY chat call (the "
+                         "loop otherwise takes it from the per-category "
+                         "policy, 0.7 default — sampling noise at 0.7 with "
+                         "n=1 rep swamps the cold-vs-warm delta)")
     ap.add_argument("--reps", type=int, default=1, help="repeats per eval task")
     ap.add_argument("--out", default="bench_real_results.json")
     ap.add_argument("--resume", action="store_true",
@@ -279,18 +314,29 @@ def main() -> int:
                 "calls_per_solve": round(calls / solves, 2) if solves else None,
                 "wall_s": round(wall, 1)}
     summary = [agg("cold"), agg("warm")]
-    print("\n| arm | eval tasks | solved | api_calls | calls/solve | wall s | llm_errors |")
-    print("|---|---|---|---|---|---|---|")
+    print("\n| arm | eval tasks | solved | api_calls | calls/solve | wall s | llm_errors | warm-with-recipe |")
+    print("|---|---|---|---|---|---|---|---|")
     for s in summary:
         rows = [r for r in results if r["label"] == s["label"]]
         s["llm_errors"] = sum(r.get("llm_errors", 0) for r in rows)
+        s["with_recipe"] = sum(1 for r in rows if r.get("recipe_at_start"))
         print(f"| {s['label']} | {s['eval_tasks']} | {s['solved']} | "
               f"{s['api_calls']} | {s['calls_per_solve']} | {s['wall_s']} | "
-              f"{s['llm_errors']} |")
+              f"{s['llm_errors']} | {s['with_recipe']}/{s['eval_tasks']} |")
     if any(s.get("llm_errors") for s in summary):
         print("WARNING: llm_errors > 0 - some runs hit endpoint failures; "
               "those rows are not clean evidence.")
     cold_c = summary[0]["calls_per_solve"]; warm_c = summary[1]["calls_per_solve"]
+    # honest headline: restrict warm to runs that actually HAD a recipe at
+    # start (a train failure silently degrades the arm to lessons-only)
+    warm_r = [r for r in results if r["label"] == "warm" and r.get("recipe_at_start")]
+    if warm_r:
+        wr_s = sum(r["tasks_solved"] for r in warm_r)
+        wr_c = sum(r["api_calls"] for r in warm_r)
+        if wr_s and cold_c:
+            print(f"\nheadline (warm-with-recipe only, n={len(warm_r)}, "
+                  f"solved={wr_s}): cold {cold_c} -> warm {round(wr_c / wr_s, 2)} "
+                  f"calls/solve ({round(100 * (1 - wr_c / wr_s / cold_c))}% saving)")
     if cold_c and warm_c:
         print(f"\ncompression: {cold_c} -> {warm_c} calls/solve "
               f"({round(100 * (1 - warm_c / cold_c))}% saving)")
