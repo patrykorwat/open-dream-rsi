@@ -27,6 +27,20 @@ try:
 except Exception:
     report["error"] = traceback.format_exc(limit=3)
     print(json.dumps(report)); sys.exit(0)
+# Shared fixtures: tests may carry a 'setup' source string (e.g.
+# "FIX_A = '...'") defining names the call strings reference. Each unique
+# setup is exec'd ONCE, so big inputs live in one place instead of being
+# repeated inside every call expression.
+_executed = set()
+for t in tests:
+    s = t.get("setup")
+    if s and s not in _executed:
+        _executed.add(s)
+        try:
+            exec(compile(s, "fixtures.py", "exec"), ns)
+        except Exception:
+            report["error"] = "fixture setup failed: " + traceback.format_exc(limit=3)
+            print(json.dumps(report)); sys.exit(0)
 for t in tests:
     try:
         got = eval(t["call"], ns)

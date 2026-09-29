@@ -633,10 +633,27 @@ class AutoRSIRuntime:
         ("" otherwise) — the semantic label recorded on the resulting node.
         """
         temperature = float((policy or {}).get("temperature", 0.7))
+        # Test-call strings can embed huge fixtures (multi-KB HTML/CSV).
+        # Tests may instead carry a 'setup' source defining fixture names;
+        # render each unique setup ONCE so the model pays the tokens a
+        # single time per proposal instead of once per call.
+        setups: list = []
+        seen_setup: set = set()
+        for t in task.tests:
+            s = t.get("setup")
+            if s and s not in seen_setup:
+                seen_setup.add(s)
+                setups.append(s)
+        tests_block = ""
+        if setups:
+            tests_block += "Fixtures (already defined when tests run):\n" + \
+                "\n".join(setups) + "\n\n"
+        tests_block += "\n".join(
+            f"  {t['call']} -> {t['expected']!r}" for t in task.tests)
         user = REFINE_USER_TEMPLATE.format(
             category=task.category,
             prompt=task.prompt,
-            tests="\n".join(f"  {t['call']} -> {t['expected']!r}" for t in task.tests),
+            tests=tests_block,
             recipe=recipe or "(none yet)",
             branch=branch_code or "(fresh branch — nothing tried here yet)",
             ideas=ideas,
