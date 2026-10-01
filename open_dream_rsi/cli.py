@@ -165,6 +165,28 @@ def main(argv: list[str] | None = None) -> int:
     polbench.add_argument("--out", default=None, help="write output to a file")
     polbench.set_defaults(func=cmd_bench_policy)
 
+    gate = sub.add_parser(
+        "gate-replay",
+        help="validate the lesson promotion gate offline on recorded "
+             "baseline/warm arm JSON pairs (no model, no key)")
+    gate.add_argument("--baseline", required=True,
+                      metavar="NAME=PATH[:KEY][?f=v,...]",
+                      help="no-lessons arm: rows under top-level KEY "
+                           "(auto-detected when unambiguous), optional "
+                           "field=value row filters")
+    gate.add_argument("--compare", action="append", required=True,
+                      metavar="NAME=PATH[:KEY][?f=v,...]",
+                      help="lessons arm to judge against the baseline "
+                           "(repeatable)")
+    gate.add_argument("--key", default="task_id",
+                      help="join field on rows (e.g. krs, task_id)")
+    gate.add_argument("--solved-field", default="solved")
+    gate.add_argument("--lessons", default=None, metavar="PATH",
+                      help="optional lessons.json: report stop-clause "
+                           "precondition per lesson text")
+    gate.add_argument("--format", choices=["json", "md"], default="json")
+    gate.set_defaults(func=cmd_gate_replay)
+
     mcp = sub.add_parser(
         "mcp",
         help="serve the loop as an MCP server (stdio for OpenCode/Goose/Claude "
@@ -243,6 +265,51 @@ def cmd_bench(args: argparse.Namespace) -> int:
     print(json.dumps(summary, indent=2))
     if args.markdown:
         print(to_markdown(summary))
+    return 0
+
+
+def cmd_gate_replay(args: argparse.Namespace) -> int:
+    from open_dream_rsi.gate_replay import (
+        filter_rows,
+        gate_replay,
+        load_arm_rows,
+        to_markdown,
+    )
+
+    def parse_spec(spec: str) -> tuple[str, str, str | None, list[str]]:
+        # name=path[:records_key][?field=value,field2=value2]
+        rest, fsep, filt = spec.partition("?")      # filters split FIRST
+        head, sep, tail = rest.partition("=")
+        if not sep:                      # no NAME= prefix — whole spec is path
+            head, tail = "", rest
+        path, ksep, rec_key = tail.partition(":")
+        filters = [f for f in filt.split(",") if f]
+        return head or path, path, (rec_key if ksep else None), filters
+
+    def load(spec: str) -> list[dict]:
+        name, path, rec_key, filters = parse_spec(spec)
+        return filter_rows(load_arm_rows(path, rec_key), filters)
+
+    b_name, b_path, _, _ = parse_spec(args.baseline)
+    baseline_rows = load(args.baseline)
+    arms: dict[str, list[dict]] = {}
+    for spec in args.compare:
+        name = parse_spec(spec)[0]
+        arms[name] = load(spec)
+    lesson_texts = None
+    if args.lessons:
+        lessons = load(args.lessons)
+        lesson_texts = [l.get("text", "") for l in lessons]
+    report = gate_replay(baseline_rows, arms, key=args.key,
+                         solved_field=args.solved_field,
+                         lesson_texts=lesson_texts)
+    if args.format == "md":
+        print(to_markdown(report))
+    else:
+        print(json.dumps(report, indent=2))
+    harmful = [n for n, d in report["arms"].items() if not d["promoted"]]
+    print(f"# baseline arm: {b_name}; gate rejects: "
+          f"{', '.join(harmful) if harmful else 'none'}", file=sys.stderr)
     return 0
 
 

@@ -315,7 +315,22 @@ with 3× ε's solves at ~80% of ε's total calls (3.77 calls/solve vs 13.97).
 python -m open_dream_rsi --memory ./mem loop --tasks tasks.json --once  # curator on by default
 python -m open_dream_rsi --memory ./mem status                          # inspect lessons.json
 python -m open_dream_rsi loop --tasks tasks.json --no-knowledge         # ablate the KB
+
+# validate the gate offline on any replay harness's recorded arms (no model, no key):
+python -m open_dream_rsi gate-replay \
+  --baseline cold=/tmp/arms.json?label=cold \
+  --compare lessons=/tmp/arms.json?label=warm \
+  --key task_id --format md
 ```
+
+`gate-replay` applies the shipped promotion rule (`lesson_gate_verdict`) to
+per-task outcome pairs joined on any key — a no-lessons baseline arm versus
+one or more lesson-injected arms recorded by any harness. It answers
+"would the gate have promoted this lesson set?" without a GPU, and reports
+join statistics honestly (unmatched/duplicate rows are counted, never
+silently compared). This is how the gate was validated against the
+18/20 → 6/20 replay above: all three harmful warm arms score net −13 / −6 / −5
+with zero gains and are rejected.
 
 ---
 

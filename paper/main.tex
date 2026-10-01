@@ -133,7 +133,7 @@ everything and solve-rate graphs are blind to policy quality.
 \section{System architecture}
 
 The package is $\sim$5k lines of pure-Python with no runtime dependencies
-(standard library only, including the LLM client) and $\sim$1.9k lines of tests.
+(standard library only, including the LLM client) and ${\sim}2$k lines of tests.
 Modules:
 
 \begin{itemize}
@@ -212,7 +212,9 @@ starts where run $N$ ended, regardless of who invoked it.
   back verified recipes without any always-on component: improvement happens
   exactly when a harness (or cron) calls \texttt{odr\_run\_once}.
   \item \hdr{Offline tools.} \texttt{odr bench} (two-arm API-efficiency
-  benchmark), \texttt{odr status} (what memory has learned), and
+  benchmark), \texttt{odr gate-replay} (applies the lesson promotion rule to
+  recorded baseline/warm arm pairs from any replay harness, off-model),
+  \texttt{odr status} (what memory has learned), and
   \texttt{odr dashboard} (live web view of the tree) run on demand against
   the same memory directory.
 \end{itemize}
@@ -324,8 +326,10 @@ paragraph---is bounded twice: by the caps and by the promotion gate.
 \hdr{What is claimed and what is not.} The scripted benchmark below
 demonstrates that the \emph{wiring} works: a gated lesson, once promoted,
 causally changes what the proposal prompt contains and the scripted world
-responds to it. On the live replay above, the gate's decision rule---applied
-to the measured per-task solve pairs---rejects every harmful arm (net $-13$,
+responds to it. On the live replay above, the gate's decision rule---shipped
+as \texttt{odr gate-replay}, which joins baseline/warm arm records from any
+replay harness on a task key and applies \texttt{lesson\_gate\_verdict}
+off-model---rejects every harmful arm (net $-13$,
 $-6$, $-5$ against the cold baseline, zero gains in all three), so the
 documented harm could not reach a prompt under the shipped algorithm. What
 remains open is the \emph{false-rejection} rate on a live model: no live arm
@@ -496,7 +500,7 @@ above the other machinery arms on every set.
 
 \subsection{Test suite}
 
-151 tests pass (1{,}908 non-blank LOC), including the benchmark's behavioural
+167 tests pass (2{,}058 non-blank LOC), including the benchmark's behavioural
 contracts:
 trap-family scores equal their constructed values; the greedy arm must solve
 nothing; the gated-policy arm must dominate $\varepsilon$; the replay rollout
