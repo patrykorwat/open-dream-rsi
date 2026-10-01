@@ -39,16 +39,18 @@ We present \textbf{Open Dream-RSI}, an open-source (MIT) Python library that
 implements the exploration layer of recursive self-improvement (RSI) around a
 \emph{frozen} large language model: no weight access, no GPU, no training. The
 library reproduces the discovery loop of Dream-RSI \cite{dreamrsi} and extends
-it in three directions that the paper leaves implicit. First, an
+it in four directions that the paper leaves implicit. First, an
 \emph{always-on supervisor} that self-schedules improvement cycles under an
 explicit API-call budget guard. Second, \emph{LLM-written exploration
 policies}: the loop asks the model to write candidate expansion policies as
 Python source, executes them in an isolated subprocess, scores them by
 \emph{counterfactual replay rollout} on the recorded discovery tree, and
 promotes them only on evidence. Third, a \emph{knowledge curator} that distils
-verifier failures into short, schema-validated, deduplicated lesson records
-retrieved into every future proposal---so iterations become not only cheaper
-but measurably smarter. Fourth, \emph{thought-conditioned branching}: each
+verifier failures into short, schema-validated, deduplicated lesson records;
+each fresh lesson is a \emph{candidate} intervention that reaches proposal
+prompts only after a paired-behavioral-replay gate proves it turns failures
+into solves without turning solves into failures---so iterations become not
+only cheaper but measurably smarter. Fourth, \emph{thought-conditioned branching}: each
 attempt records the one-line plan the model stated before its code, the
 proposal prompt carries the task's tried-idea ledger, and expansion leaves a
 branch as soon as its recorded idea repeats itself---semantic selection
@@ -60,13 +62,13 @@ isolates exploration quality where solve-rate graphs saturate: score-greedy
 exploration solves \textbf{0/120} tasks, $\varepsilon$-greedy 24\%, replay-gated
 learned policies reach \textbf{77\%} (100\% by cycle~5) at \emph{fewer} total
 calls than $\varepsilon$ spends on luck, the curated
-knowledge base alone---with zero policy-generation calls---reaches 72\%, and
+knowledge base alone---with zero policy-generation calls---reaches 73\%, and
 thought-guided branching reaches \textbf{100\% from the first cycle}
 at 1.37 calls per solve even with exploration randomness disabled. All headline numbers are produced by a scripted solver and are therefore
 claims about the \emph{machinery} (gates, sandboxes, promotion, retrieval),
 not about any particular model; we state this limitation explicitly.
-The package has zero runtime dependencies, $\sim$4k lines of library code,
-1.1k lines of tests (81 passing), a live dashboard, and a single CLI.
+The package has zero runtime dependencies, ${\sim}5$k lines of library code,
+${\sim}2$k lines of tests (151 passing), a live dashboard, and a single CLI.
 \end{abstract}
 
 \vspace{0.5em}
@@ -96,7 +98,7 @@ tool: a researcher with an OpenAI-compatible endpoint should be able to
 \texttt{pip}-install the loop, point it at their tasks and model, and get a
 self-improving search that is (a)~budget-safe, (b)~safe to run code the model
 writes, and (c)~capable of getting \emph{better}, not merely cheaper. We make
-three contributions beyond the published method description:
+four contributions beyond the published method description:
 
 \begin{enumerate}
   \item \hdr{Always-on supervisor with a hard budget guard.}
@@ -112,10 +114,15 @@ three contributions beyond the published method description:
   \item \hdr{Knowledge curator: lessons that make iterations smarter.}
   Recipes and policies capture \emph{what} worked; nothing captured \emph{why}
   attempts failed, so a trap re-pays its tuition every run. The curator
-  distils verifier failures into short validated lesson records, retrieves
-  them into future proposals, and prunes those that stop helping
-  (\S\ref{sec:curator})---the skills/memory pattern of practical agent
+  distils verifier failures into short validated lesson records and
+  \emph{promotes them by paired behavioral replay before any prompt ever sees
+  them} (\S\ref{sec:curator})---the skills/memory pattern of practical agent
   frameworks, applied to the loop itself.
+  \item \hdr{Thought-conditioned branching.}
+  Every attempt records the one-line plan the model stated before its code;
+  proposal prompts carry the task's tried-idea ledger, and expansion abandons
+  a branch as soon as its recorded idea repeats itself---semantic selection
+  replacing purely numeric score-greedy choice (\S\ref{sec:thoughts}).
 \end{enumerate}
 
 Two deterministic, key-free benchmarks back the claims (\S\ref{sec:bench}):
@@ -125,8 +132,8 @@ everything and solve-rate graphs are blind to policy quality.
 
 \section{System architecture}
 
-The package is $\sim$3.5k lines of pure-Python with no runtime dependencies
-(standard library only, including the LLM client) and 910 lines of tests.
+The package is $\sim$5k lines of pure-Python with no runtime dependencies
+(standard library only, including the LLM client) and $\sim$1.9k lines of tests.
 Modules:
 
 \begin{itemize}
@@ -279,18 +286,54 @@ plus evidential rather than sandboxed: schema and caps (2--4 trigger words;
 characters injected per prompt; $\leq$5 evidence snippets each), evidence
 required at admission, and deduplication against the existing store.
 
-\hdr{Retrieval feedback.} At proposal time the top lessons for the category
-are retrieved (trigger-match, ranked by \texttt{wins}/\texttt{uses} counters
-updated from subsequent verification outcomes); counters drive ranking and
-eviction, so lessons that demonstrably stop helping are pruned automatically.
-The knowledge base therefore cannot silently grow stale, and its worst
-failure mode---injecting an unhelpful paragraph---is bounded by the caps.
+\hdr{Behavioral promotion: lessons must earn activation.} A structural gate
+validates \emph{form}; it cannot see that a well-formed lesson is harmful. A
+live-model replay on a production task family (a greedy-decoding 8B model, 20
+held-out tasks, identical cached-page sandbox for every arm) made this
+concrete: lessons that passed every existing gate---true traps, honest
+counters, correct retrieval---took the solve rate from 18/20 to 6/20, because
+an unbounded ``keep fetching before answering'' instruction suppresses the
+answer decision on a model with no internal stopping counter; even
+\emph{content-neutral} injected text cost 5/20. Trust is therefore not a gate
+and the curator does not use one. A distilled lesson is admitted as a
+\emph{candidate intervention} with \texttt{status=staging}, invisible to
+proposal prompts (invariant enforced in \texttt{select\_lessons}), and
+activates only after a paired behavioral replay: the loop snapshots the
+\emph{first-failure} state of the task (branch code, verifier feedback, recipe
+\emph{before} any fix leaks in) and rolls it out with and without the lesson
+to depth~2---a lesson's payoff is often path-level, a redirect at step~1 that
+solves at step~2. Activation requires the harm-asymmetric sign test
+$\mathit{gains}-\mathit{regressions}\ge 1$ with \emph{zero}
+solve$\rightarrow$fail regressions \emph{and} an explicit stop clause in the
+text (a clause-less lesson is rejected regardless of the sample---an
+unbounded exploration instruction must never activate on a greedy solver
+whatever a small sample says). Rejected candidates never reach a prompt;
+activated lessons carry runtime \texttt{wins}/\texttt{uses} counters and
+auto-retire after $\ge K$ uses with zero wins. Replay calls are
+budget-counted and the gate runs only on spare budget, so knowledge never
+taxes the working loop.
 
-\hdr{What is claimed and what is not.} The benchmark below demonstrates that
-the \emph{wiring} works: a lesson, once admitted, causally changes what the
-proposal prompt contains and the scripted world responds to it. The quality
-of lesson \emph{writing} by a live model is an open question this library
-deliberately does not claim to have settled (\S\ref{sec:limits}).
+\hdr{Retrieval feedback.} At proposal time the top \emph{active} lessons for
+the category are retrieved (trigger-match, ranked by
+\texttt{wins}/\texttt{uses} counters updated from subsequent verification
+outcomes); counters drive ranking and eviction, so lessons that demonstrably
+stop helping are pruned automatically. The knowledge base therefore cannot
+silently grow stale, and its worst failure mode---injecting an unhelpful
+paragraph---is bounded twice: by the caps and by the promotion gate.
+
+\hdr{What is claimed and what is not.} The scripted benchmark below
+demonstrates that the \emph{wiring} works: a gated lesson, once promoted,
+causally changes what the proposal prompt contains and the scripted world
+responds to it. On the live replay above, the gate's decision rule---applied
+to the measured per-task solve pairs---rejects every harmful arm (net $-13$,
+$-6$, $-5$ against the cold baseline, zero gains in all three), so the
+documented harm could not reach a prompt under the shipped algorithm. What
+remains open is the \emph{false-rejection} rate on a live model: no live arm
+in that suite had net wins to accept, so the accepting half of the gate is
+validated only on the scripted knowledge arm
+(\S\ref{sec:bench}), and lesson \emph{writing} quality by a live model stays
+an open question this library deliberately does not claim to have settled
+(\S\ref{sec:limits}).
 
 \section{Thought-conditioned branching}
 \label{sec:thoughts}
@@ -417,14 +460,14 @@ arm & solves & rate & calls & calls/solve & gen.\ calls \\
 greedy & 0/120 & 0\% & 480 & $\infty$ & 0 \\
 $\varepsilon$-greedy ($\varepsilon{=}0.3$) & 29/120 & 24\% & 405 & 13.97 & 0 \\
 replay-gated policies & \textbf{92/120} & \textbf{77\%} & \textbf{252} & \textbf{2.74} & 27 policy \\
-curated knowledge base & \textbf{87/120} & \textbf{72\%} & 283 & 3.25 & 40 curator \\
+curated knowledge base & \textbf{88/120} & \textbf{73\%} & 332 & 3.77 & 34 curator \\
 thought-guided branching & \textbf{120/120} & \textbf{100\%} & \textbf{164} & \textbf{1.37} & 0 \\
 \bottomrule
 \end{tabular}
 \caption{\texttt{bench-policy}: the knowledge arm is
 $\varepsilon$-greedy \emph{with zero policy calls}---every escape above the
 $\varepsilon$ baseline is attributable to remembered lessons. Policies and
-knowledge reach the same plateau (100\% by cycle~5 and~8 respectively) and
+knowledge reach the same plateau (100\% by cycle~5 for both) and
 neither is ranked over the other. The thought arm
 additionally passes the \texttt{thought\_steering=False} ablation: with the
 semantic expansion pick disabled it falls back to 0/120 (greedy) and 29/120
@@ -442,18 +485,18 @@ default---escapes every trap from the first cycle at the lowest total cost.}
 \end{figure}
 
 \hdr{Seed robustness.} The shipped seeds (7,\,11,\,23) are not cherry-picked:
-over five independent seed sets the policy arm lands within 84--92 and the
-knowledge arm within 77--87 solves of 120 respectively---statistically
+over five independent seed sets the policy arm lands within 83--92 and the
+knowledge arm within 87--89 solves of 120 respectively---statistically
 indistinguishable from each other---while $\varepsilon$-greedy stays at
-15--29. The dominance over $\varepsilon$ (roughly 3$\times$ the solves at
-$\sim$60--70\% of its calls, 2.7--3.3 calls per solve vs.\ $\sim$14) holds on
+8--29. The dominance over $\varepsilon$ (roughly 3$\times$ the solves at
+${\sim}60$--$80\%$ of its calls, 2.7--3.8 calls per solve vs.\ ${\sim}14$--$58$) holds on
 every set.
 The thought arm reaches 120/120 on every one of the five seed sets, staying
 above the other machinery arms on every set.
 
 \subsection{Test suite}
 
-88 tests pass (1{,}041 non-blank LOC), including the benchmark's behavioural
+151 tests pass (1{,}908 non-blank LOC), including the benchmark's behavioural
 contracts:
 trap-family scores equal their constructed values; the greedy arm must solve
 nothing; the gated-policy arm must dominate $\varepsilon$; the replay rollout
@@ -517,8 +560,13 @@ We state plainly what the numbers do and do not show.
   returned by the scripted model is a canned program. The benchmarks
   therefore validate the \emph{machinery}---sandboxes, gates, promotion,
   retrieval, budget---and prove the arms differ \emph{causally} through
-  memory, not that any live model writes good lessons or policies. Live-model
-  evaluation is the required next experiment.
+  memory, not that any live model writes good lessons or policies. A
+  live-model replay (production task family, greedy-decoding 8B model) has
+  been run for the knowledge arm specifically and is reported in
+  \S\ref{sec:curator}: it \emph{falsified} the trust-based admission of
+  lessons and motivated the behavioral promotion gate; a comparable
+  live-model study of learned \emph{policies} remains the required next
+  experiment.
   \item \hdr{Benchmark self-design risk.} The decoy-trap suite was designed by
   the same author as the loop it measures. Mitigations: family scores fixed
   and asserted by construction; arm contracts enforced by tests (greedy must
@@ -540,8 +588,8 @@ needs to compound---evidence-gated learned policies and a curated,
 self-pruning knowledge base---each backed by a deterministic benchmark that
 isolates exactly the capability it claims. At library scale: 54\% fewer API
 calls at equal solve quality; on a suite where greedy exploration solves
-nothing, replay-gated policies reach 77\% and remembered knowledge 72\%
-cumulative (100\% by cycle~5--8) at $\sim$4$\times$ better cost-per-solve
+nothing, replay-gated policies reach 77\% and remembered knowledge 73\%
+cumulative (100\% by cycle~5 for both) at $\sim$4$\times$ better cost-per-solve
 than random escape. All artefacts pass structural gates before touching the
 loop; the gate, not trust, decides.
 

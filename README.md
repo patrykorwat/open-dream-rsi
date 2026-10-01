@@ -258,7 +258,7 @@ python -m open_dream_rsi bench-policy --format svg --out docs/screenshots/odr_po
 | greedy | 0/120 | 0% | 480 | ∞ | 0 | 0 |
 | epsilon_greedy | 29/120 | 24% | 405 | 13.97 | 0 | 0 |
 | **evolved_policy** | **92/120** | **77%** | **252** | **2.74** | 27 | 0 |
-| **knowledge_curator** | **87/120** | **72%** | 283 | 3.25 | 0 | 40 |
+| **knowledge_curator** | **88/120** | **73%** | 332 | 3.77 | 0 | 34 |
 | **thought_guided** | **120/120** | **100%** | **164** | **1.37** | 0 | 0 |
 
 Score-greedy exploration solves **nothing** and burns its whole budget
@@ -296,11 +296,20 @@ deduplicated **lesson records** (`lessons.json`), retrieves the relevant ones
 into every future proposal, and prunes the ones that demonstrably stop
 helping. Lessons are pure text — never executed — so the gate is structural
 (schema + caps + evidence required) plus a retrieval feedback loop
-(`uses`/`wins` counters drive ranking and eviction). The fourth benchmark arm
-proves the KB does work, not just sit on disk: it is ε-greedy **with zero
+(`uses`/`wins` counters drive ranking and eviction). **A fresh lesson is a
+candidate intervention, not knowledge:** it is admitted with `status=staging`,
+invisible to proposal prompts, and only activates after a paired-replay gate
+re-runs the failing task with/without the lesson on the *first-failure*
+snapshot and finds `gains − regressions ≥ 1` with zero solve→fail
+regressions and an explicit stop clause in the text. Live-model replay proved
+trust is not a gate: curated lessons that passed every structural check
+dropped solve-rate 18/20 → 6/20 on a greedy decoder (unbounded "keep
+fetching" advice suppresses the answer decision). The gate is what closes
+that hole. The fourth benchmark arm
+proves the gated KB does work, not just sit on disk: it is ε-greedy **with zero
 policy calls** — every escape above the ε baseline came from remembered
-knowledge, reaching 72% — at parity with the 77% of replay-gated policies
-with 3× ε's solves at ~70% of ε's total calls (3.25 calls/solve vs 13.97).
+knowledge, reaching 73% — at parity with the 77% of replay-gated policies
+with 3× ε's solves at ~80% of ε's total calls (3.77 calls/solve vs 13.97).
 
 ```bash
 python -m open_dream_rsi --memory ./mem loop --tasks tasks.json --once  # curator on by default

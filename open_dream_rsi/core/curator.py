@@ -51,6 +51,27 @@ MAX_PROMPT_LESSON_CHARS = 700
 PRUNE_MIN_USES = 4
 #: Evidence snippets stored per lesson (audit trail for `odr status`).
 MAX_EVIDENCE_PER_LESSON = 5
+#: Paired-replay promotion (lesson gate): a staging lesson activates only
+#: if re-running recorded probe episodes WITH the lesson strictly beats
+#: WITHOUT it (sign test: net wins > 0 and zero solve->fail regressions).
+#: Live-model replay (see docs / paper §live) measured that trust-gated
+#: lessons can turn a working solver into a budget-burning loop — form
+#: gates validate shape, only behavioral replay validates effect.
+LESSON_GATE_MIN_NET = 1
+
+#: A lesson must carry its own stop condition: greedy models have no
+#: internal counter that competes with an imperative to keep exploring.
+_STOP_WORDS = (
+    "stop", "answer", "respond", "return", "finish", "submit", "immediately",
+    "at most", "no more", "once you have", "without further", "never fetch",
+    "do not fetch", "skip", "max ", "then write", "reply", "terminate",
+    "natychmiast", "odpowiedz", "zakończ", "maxymalnie", "nie pobieraj",
+)
+
+
+def has_stop_clause(text: str) -> bool:
+    t = (text or "").lower()
+    return any(w in t for w in _STOP_WORDS)
 
 LESSON_CONTRACT = (
     "You are the knowledge curator of a Dream-RSI self-improvement loop. "
@@ -61,9 +82,13 @@ LESSON_CONTRACT = (
     "objects, each exactly: {{\"trigger\": \"...\", \"text\": \"...\"}}. "
     "'trigger' is 1-4 lowercase keywords tying the lesson to this failure "
     "family; 'text' is one actionable insight in at most 280 characters, "
-    "grounded ONLY in the evidence shown. No generic advice ('write better "
-    "code'), no task-specific constants, no restate-the-error entries; if "
-    "the evidence supports no lesson, return an empty array []."
+    "grounded ONLY in the evidence shown. EVERY lesson MUST end with an "
+    "explicit stop condition (e.g. '...then answer immediately', '...at "
+    "most one extra lookup') — never instruct open-ended searching: models "
+    "with deterministic decoding treat 'keep checking' as a command to "
+    "never finish. No generic advice ('write better code'), no "
+    "task-specific constants, no restate-the-error entries; if the evidence "
+    "supports no lesson, return an empty array []."
 )
 
 
@@ -142,13 +167,22 @@ def extract_json_array(reply: str) -> Optional[List[Any]]:
 
 def curate_lessons(existing: List[Dict[str, Any]],
                    distilled: List[Dict[str, str]],
-                   evidence: Optional[List[str]] = None) -> CurationResult:
+                   evidence: Optional[List[str]] = None,
+                   staging: bool = True) -> CurationResult:
     """Merge validated lessons into the KB: dedupe, refresh evidence, prune.
 
     Same-key entries MERGE (evidence grows, timestamp refreshes) instead of
     duplicating. Dead lessons (used often, zero wins) are evicted; the
     strongest ``MAX_LESSONS_PER_CATEGORY`` survive by (wins, uses, recency).
+
+    New lessons enter as ``status="staging"`` (default): they never reach a
+    proposal prompt until the paired-replay gate promotes them (the loop's
+    LessonGate) — measured on live models, freshly distilled lessons can be
+    NET HARMFUL (they bias greedy solvers into never finishing), so form
+    gates alone must not activate them. ``staging=False`` marks entries
+    directly active: use it only for pre-vetted/human-seeded knowledge.
     """
+    status = "staging" if staging else "active"
     by_key = {lesson_key(l): dict(l) for l in existing}
     added: List[Dict[str, Any]] = []
     merged = 0
@@ -167,7 +201,7 @@ def curate_lessons(existing: List[Dict[str, Any]],
         else:
             entry = {"trigger": item["trigger"], "text": item["text"],
                      "created_at": now, "updated_at": now,
-                     "wins": 0, "uses": 0,
+                     "wins": 0, "uses": 0, "status": status,
                      "evidence": [e[:160] for e in (evidence or [])][:MAX_EVIDENCE_PER_LESSON]}
             by_key[key] = entry
             added.append(entry)
@@ -188,13 +222,20 @@ def curate_lessons(existing: List[Dict[str, Any]],
 
 def select_lessons(lessons: List[Dict[str, Any]], task_prompt: str,
                    max_lessons: int = MAX_LESSONS_IN_PROMPT,
-                   max_chars: int = MAX_PROMPT_LESSON_CHARS) -> List[Dict[str, Any]]:
+                   max_chars: int = MAX_PROMPT_LESSON_CHARS,
+                   include_staging: bool = False) -> List[Dict[str, Any]]:
     """Rank lessons for one proposal: task-trigger overlap, then wins/uses.
 
-    A lesson whose trigger keywords appear in the task prompt is on-topic
-    and outranks everything else; within a tier, credit flows to lessons
-    that have actually accompanied solves.
+    Only ``status="active"`` lessons reach a proposal prompt (entries
+    without a ``status`` field predate the gate and count as active).
+    Staging candidates are invisible until the paired-replay gate promotes
+    them — the live-model replay showed freshly distilled lessons are
+    net-harmful by default, so activation must be earned, never assumed.
+    ``include_staging=True`` is for the gate itself (and tests).
     """
+    if not include_staging:
+        lessons = [l for l in lessons
+                   if str(l.get("status", "active")) == "active"]
     prompt_words = set(normalize(task_prompt).split())
     def rank(l: Dict[str, Any]) -> tuple:
         trig_words = set(normalize(str(l.get("trigger", ""))).split())
@@ -219,6 +260,38 @@ def format_lessons(lessons: List[Dict[str, Any]]) -> str:
     """Render selected lessons for the proposal prompt (plain bullets)."""
     return "\n".join(f"  - [{l.get('trigger', '')}] {l.get('text', '')}"
                      for l in lessons)
+
+
+@dataclass
+class GateVerdict:
+    promoted: List[str]
+    rejected: List[str]
+    detail: Dict[str, Any]
+
+
+def lesson_gate_verdict(results: Dict[str, List[Tuple[bool, bool]]]) -> GateVerdict:
+    """Decide staging lessons from paired replay outcomes.
+
+    ``results`` maps lesson_key -> list of (solved_with, solved_without)
+    trial pairs recorded by the loop's replay gate. Promotion rule (sign
+    test, harm-asymmetric):
+
+    * net = #(fail->solve) - #(solve->fail) >= LESSON_GATE_MIN_NET, and
+    * zero solve->fail regressions, and
+    * the lesson text carries a stop clause (``has_stop_clause``) — an
+      unbounded exploration instruction must never activate on a greedy
+      solver no matter what a small sample says.
+    """
+    promoted, rejected, detail = [], [], {}
+    for key, pairs in results.items():
+        gains = sum(1 for w, wo in pairs if w and not wo)
+        regs = sum(1 for w, wo in pairs if wo and not w)
+        net = gains - regs
+        ok = net >= LESSON_GATE_MIN_NET and regs == 0
+        detail[key] = {"gains": gains, "regressions": regs, "net": net,
+                       "promoted": ok}
+        (promoted if ok else rejected).append(key)
+    return GateVerdict(promoted, rejected, detail)
 
 
 def evidence_snippets(failures: List[Dict[str, Any]], max_items: int = 6) -> List[str]:

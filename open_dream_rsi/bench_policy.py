@@ -152,7 +152,7 @@ def choose_action(frontier, step):
 TRAP_LESSON_TEXT = (
     "A plausible branch whose verifier errors never change will never "
     "improve; re-open the low-scoring sibling branch where the fix idea "
-    "first appeared."
+    "first appeared, then submit as soon as it passes."
 )
 
 

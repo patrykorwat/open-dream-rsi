@@ -168,6 +168,7 @@ class AutoRSIRuntime:
         self.dream_iterations = dream_iterations
         self.interval_seconds = interval_seconds
         self.api_calls_used = 0
+        self._gate_snapshots: Dict[str, Dict[str, Any]] = {}
         self.max_tokens = max_tokens
         self.on_event = on_event
         # Baseline online exploration: with probability epsilon the greedy
@@ -214,6 +215,7 @@ class AutoRSIRuntime:
 
     def run_once(self) -> CycleReport:
         report = CycleReport()
+        self._drain_staging(report)      # gate leftovers from previous cycles
         tasks = self._tasks() if callable(self._tasks) else list(self._tasks)
         self._emit("cycle_start", tasks=[t.task_id for t in tasks])
         for task in tasks:
@@ -230,6 +232,25 @@ class AutoRSIRuntime:
         self.memory.log_event("cycle", **report.to_dict())
         self._emit("cycle_done", **report.to_dict())
         return report
+
+    def _drain_staging(self, report: CycleReport) -> None:
+        """Give never-gated staging lessons a chance on spare budget.
+
+        A lesson skipped by the gate (budget/probes) must not live in
+        staging forever — the curator dedups it and never re-adds it, so
+        without this drain it would silently rot invisible.
+        """
+        if not self.enable_knowledge:
+            return
+        all_tasks = self._tasks() if callable(self._tasks) else list(self._tasks)
+        by_cat: Dict[str, Task] = {}
+        for t in all_tasks:
+            by_cat.setdefault(t.category, t)
+        for cat, task in by_cat.items():
+            staged = [l for l in self.memory.get_lessons(cat)
+                      if str(l.get("status", "")) == "staging"]
+            if staged and self.api_calls_used < self.api_call_budget:
+                self._gate_staging_lessons(task, staged, report)
 
     def run_forever(self, max_cycles: Optional[int] = None) -> None:
         """Daemon mode: wake -> cycle -> sleep -> repeat (Ctrl-C to stop)."""
@@ -314,6 +335,16 @@ class AutoRSIRuntime:
                 if self.memory.save_recipe(category, code, score=result.score):
                     improved = f"{category}: new best solution (score {result.score})"
                 break
+            if task.task_id not in self._gate_snapshots:
+                # The counterfactual state the lesson must be tested on:
+                # the FIRST proposal that failed, with the recipe/ledger as
+                # they were THEN (empty). Replaying on the post-success tree
+                # leaks the fix into both arms and nets every lesson to 0.
+                self._gate_snapshots[task.task_id] = {
+                    "branch_code": code,
+                    "feedback": str(result.detail)[:600],
+                    "recipe": recipe,   # the recipe as it was BEFORE solving
+                }
             feedback = str(result.detail)[:600]
             failures.append({"action": node.action, "score": result.score,
                              "errors": [str(e)[:160] for e in (result.detail if isinstance(result.detail, list) else [result.detail])][:3]})
@@ -341,7 +372,7 @@ class AutoRSIRuntime:
             self.memory.log_event("policy_error", task_id=task.task_id, error=str(exc)[:300])
         # -- section 4: the knowledge curator distils failures into the KB ----------
         try:
-            self._maybe_curate_knowledge(task, failures, report)
+            self._maybe_curate_knowledge(task, failures, report, tree=tree)
         except Exception as exc:  # curation must never break the loop
             self.memory.log_event("curator_error", task_id=task.task_id, error=str(exc)[:300])
         self.memory.archive_tree(task.task_id, tree)
@@ -416,26 +447,46 @@ class AutoRSIRuntime:
             node = by_id.get(nid)
             return (node.thought or "").strip() if node else ""
 
-        def stagnant(nid: str) -> bool:
-            """Node's own idea is among its children's ideas -> dead polish."""
-            t = thought_of(nid)
+        def branch_sig(nid: str) -> str:
+            """Structural identity of the candidate a node produced (code
+            hash from the node action) — works without thought labels."""
             node = by_id.get(nid)
-            return bool(t) and any(thought_of(c) == t
-                                   for c in (node.children if node else []))
+            a = (node.action or "") if node else ""
+            return a.split(":", 1)[1] if a.startswith("write_code:") else ""
+
+        def stagnant(nid: str) -> bool:
+            """Node's own idea is among its children's ideas -> dead polish.
+            With thoughts off, a child reproducing the SAME candidate code
+            is the same evidence: polishing, not converging."""
+            node = by_id.get(nid)
+            if node is None:
+                return False
+            t = thought_of(nid)
+            if t and any(thought_of(c) == t for c in node.children):
+                return True
+            sig = branch_sig(nid)
+            return bool(sig) and any(branch_sig(c) == sig for c in node.children)
 
         best = max(frontier, key=lambda n: n["score"])
         own = thought_of(best["node_id"])
-        if not own or not stagnant(best["node_id"]):
+        own_sig = branch_sig(best["node_id"])
+        if not (own or own_sig) or not stagnant(best["node_id"]):
             return None  # not re-polishing a recorded idea — greedy is fine
         rank = lambda n: (n["outcome"], -n["children"])
+        labeled_ok = bool(own)  # thoughts on: only idea-labelled escapes are trusted
         fresh = [n for n in frontier
                  if n["node_id"] != best["node_id"]
                  and not stagnant(n["node_id"])
                  and thought_of(n["node_id"]) != own
-                 and thought_of(n["node_id"])  # has an idea label to trust
+                 and branch_sig(n["node_id"]) != own_sig
+                 and (thought_of(n["node_id"]) if labeled_ok else True)
                  ]
         if fresh:
-            return max(fresh, key=rank)["node_id"]
+            pick = max(fresh, key=rank)
+            # Without thought labels trust raw score; with them keep the
+            # proven outcome-rank (a low-score node may be the promising one)
+            if own or pick["score"] >= best["score"] * 0.5:
+                return pick["node_id"]
         # fallback: a node without an idea label (e.g. the seed) may still
         # hold untried ladder steps — expand it rather than the dead branch,
         # but only when no confidently-fresh candidate exists.
@@ -446,6 +497,44 @@ class AutoRSIRuntime:
         if not unlabeled:
             return None
         return max(unlabeled, key=rank)["node_id"]
+
+    def _lesson_authorized_pick(self, tree: DiscoveryTree,
+                                frontier: List[Dict[str, Any]]) -> Optional[str]:
+        """Escape the decoy trap when a lesson redirects proposals away.
+
+        Evidence: the score-greedy pick's expansions keep producing the
+        SAME candidate code (children share its code hash) — the loop is
+        polishing a dead idea. With an active lesson (checked by the caller)
+        the loop is authorized to expand the best node OUTSIDE that family.
+        Score-ranked (no idea labels available): only nodes scoring >= half
+        the stagnant pick are trusted, so the escape never dives at noise.
+        Returns None when nothing is provably stagnant -> greedy/epsilon.
+        """
+        by_id = tree.nodes
+
+        def code_sig(nid: str) -> str:
+            node = by_id.get(nid)
+            a = (node.action or "") if node else ""
+            return a.split(":", 1)[1] if a.startswith("write_code:") else ""
+
+        def stagnant(nid: str) -> bool:
+            node = by_id.get(nid)
+            sig = code_sig(nid)
+            return node is not None and bool(sig) and any(
+                code_sig(c) == sig and code_sig(c) for c in node.children)
+
+        best = max(frontier, key=lambda n: n["score"])
+        if not stagnant(best["node_id"]):
+            return None
+        own = code_sig(best["node_id"])
+        fresh = [n for n in frontier
+                 if n["node_id"] != best["node_id"]
+                 and code_sig(n["node_id"]) != own
+                 and n["score"] >= 0.5 * best["score"]]
+        if not fresh:
+            return None
+        pick = max(fresh, key=lambda n: (n["outcome"], -n["children"], n["score"]))
+        return pick["node_id"] if pick["node_id"] != best["node_id"] else None
 
     def _judge_attempt(self, task: Task, code: str,
                        report: CycleReport) -> ToolResult:
@@ -502,6 +591,19 @@ class AutoRSIRuntime:
             pick = self._thought_aware_pick(tree, frontier)
             if pick:
                 return pick
+        # Lesson-authorized escape: with an ACTIVE curated lesson for the
+        # category, a node whose children keep reproducing the SAME candidate
+        # (the lesson redirected every proposal off it) is provably being
+        # polished to death — expand the best fresh sibling instead. Without
+        # a lesson this stays pure greedy+epsilon: the escape is the lesson's
+        # authority, not a generic policy change (keeps the knowledge arm's
+        # wins attributable to the knowledge).
+        if self.thought_steering and self.enable_knowledge and not self.enable_thoughts:
+            if any(str(l.get("status", "")) == "active"
+                   for l in self.memory.get_lessons(category)):
+                pick = self._lesson_authorized_pick(tree, frontier)
+                if pick:
+                    return pick
         # epsilon-exploration baseline: occasionally try a uniformly random
         # node instead of re-polishing the best-score leaf (escapes decoys
         # only by luck — this is the "epsilon-greedy" comparison arm)
@@ -559,7 +661,7 @@ class AutoRSIRuntime:
                        code=result.source[:800])
 
     def _maybe_curate_knowledge(self, task: Task, failures: List[Dict[str, Any]],
-                               report: CycleReport) -> None:
+                               report: CycleReport, tree=None) -> None:
         """Section-4 step: distil this cycle's failures into the curated KB.
 
         Call economy mirrors policy generation: the curator is only asked
@@ -608,6 +710,160 @@ class AutoRSIRuntime:
             report.improvements.append(
                 f"{task.category}: +{len(result.added)} curated lesson(s) "
                 f"({len(result.entries)} in KB)")
+        if result.added and self.enable_knowledge:
+            self._gate_staging_lessons(task, result.added, report, tree=tree)
+
+    # -- lesson promotion gate (paired behavioral replay) ------------------------
+
+    def _gate_staging_lessons(self, task: Task, added: List[Dict[str, Any]],
+                              report: CycleReport, tree=None) -> None:
+        """Earn activation for freshly distilled lessons or drop them.
+
+        For each staging lesson, re-attempt probe tasks twice: once with
+        the lesson rendered into the proposal prompt, once without. A
+        lesson activates only on a strictly positive paired sign test with
+        zero solve->fail regressions AND a stop clause in its text (see
+        curator.lesson_gate_verdict). All gate calls are budget-counted
+        and never allowed to overrun the cycle budget.
+        """
+        from open_dream_rsi.core.curator import has_stop_clause, lesson_gate_verdict
+        all_tasks = self._tasks() if callable(self._tasks) else list(self._tasks)
+        # Primary probe = the failing task itself (the lesson was distilled
+        # from ITS failures) — replayed on the counterfactual snapshot. A
+        # same-category sibling is an OVERFIT guard, evaluated only for
+        # candidates the primary already promoted and only on budget left
+        # over: the guard must never tax the working loop for lessons that
+        # will be rejected anyway.
+        probes = [task] + [t for t in all_tasks
+                           if t.category == task.category
+                           and t.task_id != task.task_id]
+        sibling = probes[1] if len(probes) > 1 else None
+        cost = 2 * 2 * len(added)               # (with + without) x depth, primary probe
+        GATE_ROLLOUT_DEPTH = 2
+        candidates = list(added)
+        if task is None:
+            return
+        results: Dict[str, List[tuple]] = {}
+        for l in candidates:
+            results[lesson_key(l)] = []
+        if self.api_calls_used + cost > self.api_call_budget:
+            for key in results:
+                self.memory.log_event("lesson_gate_skipped",
+                                      category=task.category, lesson=key,
+                                      reason="budget")
+            return
+
+        def _paired(p: Task, subset: List[Dict[str, Any]]) -> None:
+            snap = self._gate_snapshots.get(p.task_id)
+            if p.task_id != task.task_id or snap is None:
+                # sibling guard: fresh start, no recipe — the lesson must
+                # help BEFORE the answer exists anywhere in memory
+                snap = {"branch_code": None, "feedback": "", "recipe": None}
+            baseline, base_calls = self._gate_attempt(p, None, snap,
+                                                      depth=GATE_ROLLOUT_DEPTH)
+            self.api_calls_used += base_calls
+            report.api_calls += base_calls
+            for l in subset:
+                key = lesson_key(l)
+                with_it, calls = self._gate_attempt(
+                    p, format_lessons([l]), snap,
+                    depth=GATE_ROLLOUT_DEPTH)
+                self.api_calls_used += calls
+                report.api_calls += calls
+                results[key].append((with_it, baseline))
+
+        _paired(task, candidates)
+        verdict = lesson_gate_verdict(results)
+        # Guard the survivors, not the rejects: spend leftover budget
+        # re-pairing only what already promoted.
+        if sibling is not None and verdict.promoted:
+            per = 2 * (1 + len(verdict.promoted))
+            if self.api_calls_used + per <= self.api_call_budget:
+                keep = [l for l in candidates
+                        if lesson_key(l) in set(verdict.promoted)]
+                for key in list(results):
+                    if key not in {lesson_key(l) for l in keep}:
+                        del results[key]
+                _paired(sibling, keep)
+                verdict = lesson_gate_verdict(results)
+        # stop clause is a hard precondition, independent of the sample:
+        # a clause-less lesson moves promoted -> rejected, never stays active
+        kept = []
+        for k in verdict.promoted:
+            if any(has_stop_clause(str(l.get("text", "")))
+                   for l in candidates if lesson_key(l) == k):
+                kept.append(k)
+        verdict.rejected = verdict.rejected + [k for k in verdict.promoted
+                                               if k not in set(kept)]
+        verdict.promoted = kept
+        entries = {lesson_key(l): l for l in self.memory.get_lessons(task.category)}
+        for key in verdict.promoted:
+            if key in entries:
+                entries[key]["status"] = "active"
+        for key in verdict.rejected:
+            entries.pop(key, None)
+        self.memory.replace_lessons(task.category, list(entries.values()))
+        self.memory.log_event("lesson_gate", category=task.category,
+                              promoted=verdict.promoted,
+                              rejected=verdict.rejected,
+                              detail=verdict.detail)
+        self._emit("lesson_gate", category=task.category,
+                   promoted=verdict.promoted, rejected=verdict.rejected)
+
+    def _gate_attempt(self, task: Task, lessons_text: Optional[str],
+                      snapshot: Optional[Dict[str, Any]] = None,
+                      depth: int = 2) -> tuple:
+        """One budget-counted ROLLOUT (``depth`` proposals deep) under the
+        proposal context captured at the FIRST failure of the episode
+        (branch code, failure feedback, and the recipe as it was BEFORE the
+        task was solved), lessons override applied. Returns (solved, calls).
+        Nothing persistent is modified.
+
+        The counterfactual must match the moment the lesson was distilled
+        from: replaying on the post-success tree leaks the discovered fix
+        into the baseline arm and nets every lesson to zero.
+
+        Depth > 1 matters: a lesson's payoff is often PATH-level — it
+        redirects the first proposal onto a better idea, and the task only
+        solves one expansion later. A one-proposal gate would read that
+        win as a failure. Each extra step proposes with the previous
+        proposal's code as the branch context (a clean-line rollout — the
+        tree itself is never mutated).
+        """
+        policy = self.memory.get_policy(task.category)
+        if snapshot:
+            recipe = snapshot.get("recipe")
+            ideas = ""
+        else:
+            recipe = self.memory.get_recipe(task.category)
+            tree = self.memory.load_tree(task.task_id) or \
+                self._seed_tree(task, policy)
+            ideas = self._ideas_ledger(tree) if self.enable_thoughts else ""
+        branch_code = snapshot.get("branch_code") if snapshot else None
+        feedback = snapshot.get("feedback", "") if snapshot else ""
+        calls = 0
+        try:
+            for step in range(max(1, depth)):
+                code, _thought = self._propose_candidate(
+                    task, policy, recipe, feedback, branch_code,
+                    lessons_text or "(none yet)", ideas)
+                feedback = ""  # only the first step replays the recorded failure
+                calls += 1
+                if code is None:
+                    return False, calls
+                if task.tests:
+                    result = self.verifier.run(code, task.tests)
+                elif self.enable_judge:
+                    report = CycleReport()
+                    result = self._judge_attempt(task, code, report)
+                else:
+                    return False, calls
+                if result.solved:
+                    return True, calls
+                branch_code = code  # roll forward on the clean-line proposal
+            return False, calls
+        except Exception:  # a broken gate must never break the loop
+            return False, calls
 
     def _seed_tree(self, task: Task, policy: Optional[Dict[str, float]]) -> DiscoveryTree:
         tree = DiscoveryTree()
