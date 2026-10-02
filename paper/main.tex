@@ -296,7 +296,17 @@ concrete: lessons that passed every existing gate---true traps, honest
 counters, correct retrieval---took the solve rate from 18/20 to 6/20, because
 an unbounded ``keep fetching before answering'' instruction suppresses the
 answer decision on a model with no internal stopping counter; even
-\emph{content-neutral} injected text cost 5/20. Trust is therefore not a gate
+\emph{content-neutral} injected text cost 5/20. A follow-up three-arm
+ablation localized the hazard precisely: the \emph{same} content rewritten
+as declarative facts (no imperative verbs, neutral frame) scored
+18/20---matching the contemporaneous cold baseline (exact McNemar
+$p{=}1.0$)---while the imperative form of those same true facts lost 12
+paired comparisons with 0 wins ($p<0.001$); an exemplar worked-example
+(recipe warm-start) arm scored 16/20 and a facts$+$exemplar arm 13/20, so
+imitation of a solved example does not anchor termination either. The
+hazard is the imperative mood and open-ended checking instruction, not the
+knowledge; the shipped prompt frames lessons as declarative background and
+the curator contract requires declarative phrasing. Trust is therefore not a gate
 and the curator does not use one. A distilled lesson is admitted as a
 \emph{candidate intervention} with \texttt{status=staging}, invisible to
 proposal prompts (invariant enforced in \texttt{select\_lessons}), and

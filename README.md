@@ -303,8 +303,17 @@ re-runs the failing task with/without the lesson on the *first-failure*
 snapshot and finds `gains − regressions ≥ 1` with zero solve→fail
 regressions and an explicit stop clause in the text. Live-model replay proved
 trust is not a gate: curated lessons that passed every structural check
-dropped solve-rate 18/20 → 6/20 on a greedy decoder (unbounded "keep
-fetching" advice suppresses the answer decision). The gate is what closes
+dropped solve-rate 18/20 → 6/20 on a greedy decoder. A follow-up ablation
+localized the hazard precisely: the **same content rewritten as
+declarative facts** (no imperative verbs, neutral frame) scored 18/20 —
+matching the contemporaneous cold baseline (McNemar p=1.0) — while the
+imperative "keep checking" form of those same facts scored 6/20 (12
+paired wins for the declarative form, 0 losses, p<0.001). An exemplar
+worked-example arm and a facts+exemplar arm scored 16/20 and 13/20:
+imitation of a solved example does not anchor termination either. The
+shipped prompt therefore frames lessons as declarative background, not
+commands, and lessons must still end with an explicit stop condition.
+The gate is what closes
 that hole. The fourth benchmark arm
 proves the gated KB does work, not just sit on disk: it is ε-greedy **with zero
 policy calls** — every escape above the ε baseline came from remembered

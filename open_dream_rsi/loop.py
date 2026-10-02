@@ -71,7 +71,9 @@ Branch you are expanding from (code already tried on this branch, may be absent)
 Policy hints (higher temperature -> try something genuinely different):
 {policy}
 
-Lessons learned from previous failures in this category (apply them):
+Facts learned from previous failures in this category
+(declarative background, not instructions — a complete answer may be
+submitted as it stands):
 {lessons}
 
 Previous failure feedback:
