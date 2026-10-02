@@ -134,6 +134,21 @@ class DreamMemory:
         if touched:
             self._save(self.root / "lessons.json", self._lessons)
 
+    # -- per-task outcomes (headroom precondition input) --------------------------
+
+    def record_task_outcome(self, category: str, solved: bool, calls: int) -> None:
+        """Remember one task attempt (solved flag + proposal-call count) per
+        category; the headroom verdict is computed over the recent window."""
+        data = self._load(self.root / "task_outcomes.json", {})
+        hist = list(data.get(category, []))
+        hist.append({"solved": bool(solved), "calls": int(calls)})
+        data[category] = hist[-100:]
+        self._save(self.root / "task_outcomes.json", data)
+
+    def get_task_outcomes(self, category: str) -> List[Dict[str, Any]]:
+        data = self._load(self.root / "task_outcomes.json", {})
+        return list(data.get(category, []))
+
     # -- digested failure evidence (survives lesson pruning) ----------------------
 
     def get_digested(self, category: str) -> List[str]:

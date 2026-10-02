@@ -363,3 +363,58 @@ class KnowledgeCurator:
                 continue
             return validated, ""
         return [], feedback or "distillation failed"
+
+
+# -- headroom precondition (live-replay v3-v9 finding) --------------------------
+#
+# A cold model that already solves a family cheaply leaves no room for
+# guidance to pay for its prompt-perturbation tax: across seven published
+# injection mechanisms (imperative/declarative lessons, exemplars, abstract
+# workflows, evidence certificates, reactive-on-error, end-position framing)
+# NOT ONE beat a contemporaneous cold baseline of 19/20 solves at 3.0
+# calls/solve — every arm had zero paired gains (worst: 11/20, p=0.008).
+# Curation effort belongs to categories with MEASURED headroom instead.
+
+#: Minimum recent solve-rate below which a category has headroom for lessons.
+HEADROOM_MIN_SOLVE_RATE = 0.7
+#: Maximum baseline calls-per-solve above which a category has headroom.
+HEADROOM_MAX_CALLS_PER_SOLVE = 5.0
+#: How many recent per-task outcomes the verdict is computed over.
+HEADROOM_WINDOW = 10
+
+
+def headroom_verdict(outcomes: List[Dict[str, Any]],
+                     min_solve_rate: float = HEADROOM_MIN_SOLVE_RATE,
+                     max_calls_per_solve: float = HEADROOM_MAX_CALLS_PER_SOLVE,
+                     ) -> Dict[str, Any]:
+    """Decide whether a category has room for lessons to pay off.
+
+    ``outcomes``: per-task records ``{"solved": bool, "calls": int}`` (the
+    loop's own proposal-call counts; the most recent ``HEADROOM_WINDOW`` are
+    used). Headroom exists when the recent solve-rate is below
+    ``min_solve_rate`` OR the mean calls-per-solve exceeds
+    ``max_calls_per_solve``. An empty history has headroom: a fresh category
+    gets the curator's benefit of the doubt. The stats used are returned so
+    the decision is auditable in ``events.jsonl``.
+    """
+    recent = list(outcomes)[-HEADROOM_WINDOW:]
+    if not recent:
+        return {"has_headroom": True, "n": 0, "solve_rate": None,
+                "calls_per_solve": None, "reason": "no history yet"}
+    n = len(recent)
+    solved = [o for o in recent if o.get("solved")]
+    solve_rate = len(solved) / n
+    cps = (sum(int(o.get("calls", 0)) for o in solved) / len(solved)) \
+        if solved else None
+    if solve_rate < min_solve_rate:
+        return {"has_headroom": True, "n": n, "solve_rate": round(solve_rate, 3),
+                "calls_per_solve": None if cps is None else round(cps, 2),
+                "reason": f"solve_rate {solve_rate:.2f} < {min_solve_rate}"}
+    if cps is not None and cps > max_calls_per_solve:
+        return {"has_headroom": True, "n": n, "solve_rate": round(solve_rate, 3),
+                "calls_per_solve": round(cps, 2),
+                "reason": f"calls/solve {cps:.2f} > {max_calls_per_solve}"}
+    return {"has_headroom": False, "n": n, "solve_rate": round(solve_rate, 3),
+            "calls_per_solve": None if cps is None else round(cps, 2),
+            "reason": "baseline solves cheaply: lessons can only pay their "
+                      "perturbation tax (live replay v3-v9, zero paired gains)"}

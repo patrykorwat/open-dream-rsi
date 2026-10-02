@@ -323,7 +323,22 @@ whatever a small sample says). Rejected candidates never reach a prompt;
 activated lessons carry runtime \texttt{wins}/\texttt{uses} counters and
 auto-retire after $\ge K$ uses with zero wins. Replay calls are
 budget-counted and the gate runs only on spare budget, so knowledge never
-taxes the working loop.
+taxes the working loop. A third, upstream precondition follows from the
+seven-arm extension of this replay: abstract workflows induced from success
+trajectories, evidence certificates in the answer schema, reactive-on-error
+notes, and end-of-prompt framing of the measured-safe declarative text were
+each injected on the same family---every arm scored ZERO paired gains
+against the contemporaneous cold baseline (19/20 at 3.0 calls/solve), the
+worst arm significantly worse ($11/20$, $p{=}0.008$; recency made the model
+\emph{act on} facts that were inert mid-prompt), and the single hard-tail
+task burned the full call budget in \emph{all} arms, i.e.\ its failure was
+environment-side, not prompt-side. The loop therefore computes a
+\emph{headroom verdict} per category from its own recorded outcomes
+(\texttt{headroom\_verdict}: recent solve-rate $< 0.7$ or calls-per-solve
+$> 5$; empty history counts as headroom) and skips curator and gate calls
+entirely where the baseline already solves cheaply---guidance can only pay
+its perturbation tax there, and effort belongs to families with measured
+headroom.
 
 \hdr{Retrieval feedback.} At proposal time the top \emph{active} lessons for
 the category are retrieved (trigger-match, ranked by

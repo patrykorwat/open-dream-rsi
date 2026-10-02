@@ -244,6 +244,7 @@ class AutoRSIRuntime:
         """
         if not self.enable_knowledge:
             return
+        from open_dream_rsi.core.curator import headroom_verdict
         all_tasks = self._tasks() if callable(self._tasks) else list(self._tasks)
         by_cat: Dict[str, Task] = {}
         for t in all_tasks:
@@ -251,8 +252,14 @@ class AutoRSIRuntime:
         for cat, task in by_cat.items():
             staged = [l for l in self.memory.get_lessons(cat)
                       if str(l.get("status", "")) == "staging"]
-            if staged and self.api_calls_used < self.api_call_budget:
-                self._gate_staging_lessons(task, staged, report)
+            if not staged or self.api_calls_used >= self.api_call_budget:
+                continue
+            verdict = headroom_verdict(self.memory.get_task_outcomes(cat))
+            if not verdict["has_headroom"]:
+                self.memory.log_event("lesson_gate_skipped", category=cat,
+                                      reason="no_headroom", **verdict)
+                continue
+            self._gate_staging_lessons(task, staged, report)
 
     def run_forever(self, max_cycles: Optional[int] = None) -> None:
         """Daemon mode: wake -> cycle -> sleep -> repeat (Ctrl-C to stop)."""
@@ -277,6 +284,7 @@ class AutoRSIRuntime:
 
     def _work_on_task(self, task: Task, report: CycleReport) -> tuple[bool, str]:
         category = task.category
+        calls_at_start = report.api_calls
         policy = self.memory.get_policy(category)
         recipe = self.memory.get_recipe(category)
         tree = self.memory.load_tree(task.task_id) or self._seed_tree(task, policy)
@@ -372,11 +380,21 @@ class AutoRSIRuntime:
             self._maybe_evolve_policy_code(task, tree, report, solved=solved)
         except Exception as exc:  # policy evolution must never break the loop
             self.memory.log_event("policy_error", task_id=task.task_id, error=str(exc)[:300])
+        # -- headroom precondition (live replay v3-v9): on a family the cold
+        # model already solves cheaply, every published injection mechanism
+        # measured ZERO paired gains (seven arms, v3-v9) — the curator and
+        # the gate would only spend budget to produce text the gate must
+        # reject. The verdict uses the PRIOR history (an empty one = fresh
+        # category = benefit of the doubt); this attempt is recorded AFTER
+        # curation so the first cycle of a new category is never judged on
+        # its own single outcome.
         # -- section 4: the knowledge curator distils failures into the KB ----------
         try:
             self._maybe_curate_knowledge(task, failures, report, tree=tree)
         except Exception as exc:  # curation must never break the loop
             self.memory.log_event("curator_error", task_id=task.task_id, error=str(exc)[:300])
+        self.memory.record_task_outcome(category, solved=solved,
+                                        calls=report.api_calls - calls_at_start)
         self.memory.archive_tree(task.task_id, tree)
         self.memory.log_event(
             "task", task_id=task.task_id, category=category,
@@ -675,6 +693,14 @@ class AutoRSIRuntime:
         if not self.enable_knowledge or not failures:
             return
         if self.api_calls_used >= self.api_call_budget:
+            return
+        from open_dream_rsi.core.curator import headroom_verdict
+        verdict = headroom_verdict(self.memory.get_task_outcomes(task.category))
+        if not verdict["has_headroom"]:
+            # v3-v9 measured: no injection mechanism beats a cheap cold
+            # baseline — do not spend a curator or gate call on this category.
+            self.memory.log_event("lesson_gate_skipped", category=task.category,
+                                  reason="no_headroom", **verdict)
             return
         existing = self.memory.get_lessons(task.category)
         seen_evidence = set(self.memory.get_digested(task.category))

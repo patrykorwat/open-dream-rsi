@@ -310,8 +310,17 @@ matching the contemporaneous cold baseline (McNemar p=1.0) — while the
 imperative "keep checking" form of those same facts scored 6/20 (12
 paired wins for the declarative form, 0 losses, p<0.001). An exemplar
 worked-example arm and a facts+exemplar arm scored 16/20 and 13/20:
-imitation of a solved example does not anchor termination either. The
-shipped prompt therefore frames lessons as declarative background, not
+imitation of a solved example does not anchor termination either. Seven
+further arms — abstract workflows, evidence certificates in the answer
+schema, reactive-on-error notes, end-of-prompt framing — all scored ZERO
+paired gains against the contemporaneous cold baseline (19/20 @ 3.0
+calls/solve); the worst (same safe text moved mid→end of prompt) dropped to
+11/20, p=0.008, because recency makes the model *act on* facts that were
+inert mid-prompt. The loop therefore also enforces a **headroom verdict**
+per category (recent solve-rate < 0.7 or calls/solve > 5; empty history =
+benefit of the doubt) and spends zero curator/gate calls where the baseline
+already solves cheaply — guidance there can only pay its perturbation tax.
+The shipped prompt therefore frames lessons as declarative background, not
 commands, and lessons must still end with an explicit stop condition.
 The gate is what closes
 that hole. The fourth benchmark arm
