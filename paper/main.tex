@@ -627,9 +627,9 @@ session at a median of $\sim$1.5 minutes, two orders of magnitude faster than
 any schedule can wake. The shipped answer therefore splits the problem:
 cross-session knowledge stays in the gated, headroom-aware curator above,
 while sub-episode reaction is handled mechanically in the tool-execution
-layer (the standalone error-class sentinel in \texttt{plugins/}, whose notes
-follow the same declarative, reactive-injection rules the replay arms
-validated).
+layer (the host-agnostic error-class sentinel in \texttt{plugins/}, with
+adapters for Hermes and Claude Code, whose notes follow the same
+declarative, reactive-injection rules the replay arms validated).
 
 
 \begin{thebibliography}{99}

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -216,6 +217,35 @@ def main(argv: list[str] | None = None) -> int:
                        help="show resolved upstream (key masked) and exit")
     proxy.set_defaults(func=cmd_proxy)
 
+    sent = sub.add_parser(
+        "sentinel",
+        help="host-agnostic error-class sentinel: annotate failing tool "
+             "results with recurrence facts (command-hook compatible)")
+    sent_sub = sent.add_subparsers(dest="sentinel_command", required=True)
+    chk = sent_sub.add_parser(
+        "check", help="read one tool-result event JSON on stdin, print a "
+                      "note if the error class is recurring (plain) or a "
+                      "host response (--format claude)")
+    chk.add_argument("--tool", default=None,
+                     help="tool name (else event.tool_name / event.tool)")
+    chk.add_argument("--session", default=None,
+                     help="session id (else event.session_id / $CLAUDE_SESSION_ID)")
+    chk.add_argument("--status", default=None, choices=["error", "ok"],
+                     help="host-reported status (else inferred from payload)")
+    chk.add_argument("--format", default="plain", choices=["plain", "claude"],
+                     help="plain: note or nothing on stdout; claude: "
+                          "PostToolUse hook JSON")
+    chk.add_argument("--state", default=None,
+                     help="state file (default $ODR_SENTINEL_STATE or "
+                          "~/.local/state/odr-sentinel/state.json)")
+    chk.set_defaults(func=cmd_sentinel_check)
+    led = sent_sub.add_parser("ledger", help="show the tracked error-class ledger")
+    led.add_argument("--state", default=None)
+    led.set_defaults(func=cmd_sentinel_ledger)
+    rst = sent_sub.add_parser("reset", help="clear the ledger")
+    rst.add_argument("--state", default=None)
+    rst.set_defaults(func=cmd_sentinel_reset)
+
     args = parser.parse_args(argv)
     return args.func(args)
 
@@ -250,6 +280,71 @@ def cmd_proxy(args: argparse.Namespace) -> int:
     if args.print_config:
         argv += ["--print-config"]
     return proxy_main(argv)
+
+
+def cmd_sentinel_check(args: argparse.Namespace) -> int:
+    """Command-hook adapter: one tool-result event JSON on stdin -> note.
+
+    Event schema (all optional): {"tool_name"|"tool": str,
+    "result"|"tool_response": any, "session_id": str, "status": "error"|"ok",
+    "error_message": str}. Always exits 0 and prints at most the note (plain)
+    or a valid hook response (claude) — never blocks the host."""
+    import sys as _sys
+
+    from open_dream_rsi.sentinel import SentinelEngine
+
+    try:
+        event = json.loads(_sys.stdin.read() or "{}")
+        if not isinstance(event, dict):
+            event = {}
+    except Exception:
+        event = {}
+    tool = args.tool or str(event.get("tool_name") or event.get("tool") or "?")
+    result = event.get("result", event.get("tool_response"))
+    if not isinstance(result, str):
+        result = json.dumps(result, default=str)
+    session = (args.session or event.get("session_id")
+               or os.environ.get("CLAUDE_SESSION_ID") or "default")
+    status = args.status or event.get("status")
+    error_message = event.get("error_message")
+    if event.get("hook_event_name") == "PostToolUseFailure" and status is None:
+        # the host already tells us this call failed — no need to guess
+        status = "error"
+        error_message = error_message or (result if isinstance(result, str) else None)
+    engine = SentinelEngine(state_path=args.state,
+                            intra_session_repeat=_cfg_sentinel(args, "intra_session_repeat", 2),
+                            cross_session_count=_cfg_sentinel(args, "cross_session_count", 2))
+    note = engine.observe(tool, result, session,
+                          status=status, error_message=error_message)
+    if args.format == "claude":
+        payload = {}
+        if note:
+            payload = {"hookSpecificOutput": {
+                "hookEventName": event.get("hook_event_name") or "PostToolUse",
+                "additionalContext": note.strip()}}
+        print(json.dumps(payload))
+    elif note:
+        print(note.strip())
+    return 0
+
+
+def _cfg_sentinel(args: argparse.Namespace, key: str, default: int) -> int:
+    return int(os.environ.get("ODR_SENTINEL_" + key.upper(), default))
+
+
+def cmd_sentinel_ledger(args: argparse.Namespace) -> int:
+    from open_dream_rsi.sentinel import SentinelEngine
+
+    print(SentinelEngine(state_path=args.state).ledger_text())
+    return 0
+
+
+def cmd_sentinel_reset(args: argparse.Namespace) -> int:
+    from open_dream_rsi.sentinel import SentinelEngine
+
+    SentinelEngine(state_path=args.state).reset()
+    print("Sentinel: signature ledger cleared.")
+    return 0
 
 
 def cmd_bench(args: argparse.Namespace) -> int:

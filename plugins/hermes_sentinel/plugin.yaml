@@ -1,5 +1,5 @@
 name: sentinel
-version: 1.1.0
+version: 1.2.0
 description: >-
   In-session error-class sentinel. Watches every tool result via the
   transform_tool_result hook, fingerprints semantic error classes
