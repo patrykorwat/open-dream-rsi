@@ -1,0 +1,15 @@
+name: sentinel
+version: 1.1.0
+description: >-
+  In-session error-class sentinel. Watches every tool result via the
+  transform_tool_result hook, fingerprints semantic error classes
+  (numbers/paths/urls normalized away), and when the same class repeats it
+  appends a short declarative note to the failing result: recurrence facts
+  plus an explicit stop condition. Reacts in seconds, while the skill
+  curator only wakes weekly.
+author: patrykorwat
+license: MIT
+provides_hooks:
+  - transform_tool_result
+kind: standalone
+source: local

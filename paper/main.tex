@@ -620,7 +620,16 @@ calls at equal solve quality; on a suite where greedy exploration solves
 nothing, replay-gated policies reach 77\% and remembered knowledge 73\%
 cumulative (100\% by cycle~5 for both) at $\sim$4$\times$ better cost-per-solve
 than random escape. All artefacts pass structural gates before touching the
-loop; the gate, not trust, decides.
+loop; the gate, not trust, decides. One corollary of the hazard analysis is
+architectural: curation is bounded by the episode boundary — measured on a
+production session store, recurring error classes re-appear within one
+session at a median of $\sim$1.5 minutes, two orders of magnitude faster than
+any schedule can wake. The shipped answer therefore splits the problem:
+cross-session knowledge stays in the gated, headroom-aware curator above,
+while sub-episode reaction is handled mechanically in the tool-execution
+layer (the standalone error-class sentinel in \texttt{plugins/}, whose notes
+follow the same declarative, reactive-injection rules the replay arms
+validated).
 
 
 \begin{thebibliography}{99}

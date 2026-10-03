@@ -350,6 +350,29 @@ silently compared). This is how the gate was validated against the
 18/20 → 6/20 replay above: all three harmful warm arms score net −13 / −6 / −5
 with zero gains and are rejected.
 
+### ⚡ Deployment artifact: the in-session sentinel (`plugins/hermes_sentinel/`)
+
+Every finding above shares one structural weakness: curation is *epistemic* —
+it reads outcomes after episodes end and wakes on a schedule (a weekly
+curator in the host agent). Measured on a real install's session store
+(256k messages / 30 days): a recurring error class re-appears **within one
+session** after a median of ~1.5 minutes. No schedule can win that race, so
+the shipped answer moves the mechanism into the tool-execution layer of the
+host runtime: a single-hook plugin that fingerprints error *classes* (URLs,
+paths, numbers, hexes normalized away — different arguments, same failure)
+on every tool result and, at a repeat threshold, appends a short
+declarative note to the failing result itself: recurrence facts plus an
+explicit stop condition, never a command (the 7-arm replay showed
+imperative framing measurably extends loops). Clean calls pay zero prompt
+tax — the note rides only failing results, the same reactive-injection
+principle the KB arms validated. The plugin is self-contained (stdlib, no
+ODR import), ships its own pytest suite (17 tests, faked plugin context,
+including a durable-state restart roundtrip), and installs by copying the
+directory into the host's plugins dir. It is the practical complement to the
+paper's negative results: curation stays where it demonstrably helps
+(cross-session knowledge with headroom), and everything faster than an
+episode boundary is handled mechanically.
+
 ---
 
 ## 🔭 Related work & positioning
@@ -399,6 +422,8 @@ with zero gains and are rejected.
 * `open_dream_rsi.bench`: two-arm API-efficiency benchmark (dreaming vs cold baseline).
 * `open_dream_rsi.llm`: OpenAI-compatible client (OpenAI, Cursor Models API, local servers).
 * `open_dream_rsi.utils.evaluator`: Scoring and ranking of policies over the recorded history.
+* `plugins/hermes_sentinel`: standalone in-session error-class sentinel — host-runtime plugin
+  (no ODR import) implementing the sub-episode reaction time the curator schedule cannot meet.
 
 ---
 
