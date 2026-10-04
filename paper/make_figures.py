@@ -210,8 +210,48 @@ def fig_goose():
     plt.close(fig)
 
 
+
+
+# Loop-memory pull study on goose (goose_loop_bench): ODR's 5 demo tasks
+# (recipes promoted by the loop) + 3 novel categories the loop never saw.
+# Solved 8/8 in BOTH arms on this model; the measurable axis is calls.
+LOOP_TASKS = [
+    # (task, novel?, cold_calls, odr_calls)
+    ("add1", False, 2, 3), ("clamp1", False, 2, 3), ("rev1", False, 2, 3),
+    ("fact1", False, 2, 3), ("pal1", False, 2, 3),
+    ("gcd1", True, 2, 3), ("roman1", True, 2, 4), ("steps1", True, 2, 9),
+]
+
+
+def fig_loop():
+    fig, ax = plt.subplots(figsize=(6.6, 2.9))
+    xs = range(len(LOOP_TASKS))
+    w = 0.38
+    ax.bar([x - w / 2 for x in xs], [t[2] for t in LOOP_TASKS], w,
+           color="0.35", label="cold")
+    ax.bar([x + w / 2 for x in xs], [t[3] for t in LOOP_TASKS], w,
+           color=C["data"], label="ODR MCP (warm recipes)")
+    for x, t in enumerate(LOOP_TASKS):
+        ax.annotate(str(t[2]), (x - w / 2, t[2] + 0.1), ha="center", fontsize=7)
+        ax.annotate(str(t[3]), (x + w / 2, t[3] + 0.1), ha="center", fontsize=7)
+    ax.axvline(4.5, color=C["warn"], ls=":", lw=1)
+    ax.text(5.7, 7.6, "categories the loop never saw:\nno recipe to reuse,\nprotocol cost only",
+            fontsize=7.5, color=C["warn"], va="top", ha="center")
+    ax.set_xticks(list(xs))
+    ax.set_xticklabels([t[0] for t in LOOP_TASKS], fontsize=7.5)
+    ax.set_ylabel("LLM calls per episode")
+    ax.set_title("goose on ODR's toy suite: 8/8 solved in both arms — only the "
+                 "call budget differs", fontsize=9)
+    ax.legend(frameon=False, fontsize=8, loc="upper left")
+    no_overlap(fig)
+    fig.tight_layout()
+    fig.savefig(HERE / "fig_loop.png")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     fig_race()
     fig_arms()
     fig_goose()
+    fig_loop()
     print("wrote fig_race.png, fig_arms.png")

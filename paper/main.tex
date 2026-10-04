@@ -574,6 +574,28 @@ from cold are noise; the claim we carry forward is the asymmetry
 --- \emph{proactive injection taxes, reactive annotation does not} ---
 which held on both hosts.
 
+Which raises the honest question for the \emph{other} ODR surface: if the
+loop's own MCP tools (\texttt{odr\_recipes}, warm memory of promoted
+solutions) are exposed to goose, does remembered knowledge help a second
+agent? We re-ran the loop's toy suite (5 tasks whose recipes the loop had
+promoted, plus 3 categories it had never seen) on goose, cold vs.\ MCP arm.
+Both arms solved 8/8 --- the suite saturates this model cold --- but the
+MCP arm spent $1.9\times$ the LLM calls (3.88 vs.\ 2.00 mean;
+5.33 on recipe-miss categories). Memory cannot add what cold already
+delivers, and the pull protocol is not free even when it succeeds. The
+loop's value stands where we measured it (scripted trap worlds, gated
+promotion); a model that does not need the recipe only pays to ask.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{fig_loop.png}
+\caption{Warm-memory pull study on goose: per-episode LLM calls, cold vs.\
+the ODR MCP server with promoted recipes attached. Solved fraction is 8/8
+in both arms (not shown); the visible effect is the protocol cost, largest
+on categories the loop never saw.}
+\label{fig:loop}
+\end{figure}
+
 \begin{figure}[h]
 \centering
 \includegraphics[width=\linewidth]{fig_goose.png}
