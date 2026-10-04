@@ -455,6 +455,13 @@ mechanically.
   vendored engine for standalone copy-install).
 * `plugins/claude_code`: Claude Code adapter (PostToolUse/PostToolUseFailure settings snippet
   calling `python -m open_dream_rsi sentinel check`).
+* `plugins/goose`: goose adapter (Stop-hook reactive delivery; pairs with the
+  MCP server below — goose has no post-tool injection channel).
+* `open_dream_rsi.mcp_server`: stdlib MCP stdio server — `sentinel_check` as a
+  pull tool + sandbox serving for cross-agent benchmarks (goose arms measured:
+  reactive delivery cost 0 solves vs cold, pull-based access cost 3).
+* `patches/`: host-core patches as `.patch` files (reactive curator cadence:
+  `curator.due_minutes` — 90.7% of same-class error repeats arrive <60 min).
 
 ---
 

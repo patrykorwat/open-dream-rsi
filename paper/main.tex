@@ -546,9 +546,49 @@ every set.
 The thought arm reaches 120/120 on every one of the five seed sets, staying
 above the other machinery arms on every set.
 
+\subsection{Cross-agent replication (goose)}
+\label{sec:goose}
+
+To test whether the sentinel's value is a property of the \emph{mechanism}
+rather than of our host integration, we re-ran the identical 20-task,
+identical-scoring study inside a different agent: \texttt{goose}
+(block/goose, v1.53 CLI), same endpoint, same model, same sandbox, served
+to the agent over a stdlib Model-Context-Protocol server
+(\texttt{open\_dream\_rsi.mcp\_server}). Goose exposes no post-tool
+injection channel, so delivery uses the host's own blockable event
+(\texttt{Stop}); the arms are cold, pull (\texttt{sentinel\_check} as an
+MCP tool), stop-delivery (server-side observation, reactive note), and both.
+
+Figure~\ref{fig:goose} shows the outcome, and it repeats the Hermes pattern
+with a sharper negative: pull-based access costs 3 solves
+(14/20 vs.\ 17/20 cold, McNemar $p{=}0.38$) --- the model spends calls on
+the tool and still fails --- while reactive delivery is the only arm that
+does not lose ground (18/20, $+2/-1$, $p{=}1.0$). The mechanism was live:
+across the three sentinel arms the sandbox logged 85 failing calls, every
+one observed by the engine; it emitted \emph{zero} notes, because goose's
+failures were
+one-off classes that did not recur within an episode. That is the
+zero-tax property measured directly on a second agent: when there is
+nothing recurrent to say, the sentinel is free. The $\pm$1 differences
+from cold are noise; the claim we carry forward is the asymmetry
+--- \emph{proactive injection taxes, reactive annotation does not} ---
+which held on both hosts.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{fig_goose.png}
+\caption{Cross-agent replication on goose: solved tasks vs.\ tool calls per
+solve, four arms, same tasks/scoring/model as the Hermes-side arms.
+Annotations give paired discordants against cold and exact McNemar $p$.
+The sentinel emitted no recurrence note on any episode (failures were
+one-off classes), yet pull-based access still cost solves --- the tax is
+in the prompting, not in the notes.}
+\label{fig:goose}
+\end{figure}
+
 \subsection{Test suite}
 
-210 tests pass (2{,}538 non-blank LOC), including the benchmark's behavioural
+216 tests pass (2{,}639 non-blank LOC), including the benchmark's behavioural
 contracts:
 trap-family scores equal their constructed values; the greedy arm must solve
 nothing; the gated-policy arm must dominate $\varepsilon$; the replay rollout

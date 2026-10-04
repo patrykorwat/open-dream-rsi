@@ -162,7 +162,56 @@ def fig_arms():
     plt.close(fig)
 
 
+
+
+# Cross-agent replication on block/goose (same model, same 20 tasks, same
+# scoring; goose 1.53 CLI, stdlib MCP sandbox server, Stop-hook delivery).
+# Aggregates verbatim from odr-bench/goose_results.jsonl (private fixtures);
+# McNemar discordants: b = cold-only solves (arm loss),
+# c = arm-only solves (arm win); p two-sided exact binomial.
+GOOSE_ARMS = [
+    # (label, solved/20, calls_per_solve, b_vs_cold, c_vs_cold)
+    ("cold",        17, 2.41, None, None),
+    ("osi_pull",    14, 3.00, 4, 1),
+    ("osi_stop",    18, 2.89, 1, 2),
+    ("osi_full",    13, 3.38, 5, 1),
+]
+
+
+def fig_goose():
+    import math
+    fig, ax = plt.subplots(figsize=(6.6, 3.0))
+    col = {"cold": "0.3", "osi_pull": C["warn"],
+           "osi_stop": C["ok"], "osi_full": C["data"]}
+    offs = {"cold": (0, -14), "osi_pull": (12, 4),
+            "osi_stop": (-1, 11), "osi_full": (12, -8)}
+    for label, solved, cpc, b, c in GOOSE_ARMS:
+        ax.scatter(cpc, solved, s=120 if label == "cold" else 85,
+                   marker="s" if label == "cold" else "o",
+                   color=col[label], edgecolor="black", lw=0.5, zorder=3)
+        ha = "center" if label in ("cold", "osi_stop") else "left"
+        ax.annotate(label, (cpc, solved), textcoords="offset points",
+                    xytext=offs[label], fontsize=8, ha=ha)
+        if b is not None:
+            n = b + c
+            p = min(1.0, 2.0 * sum(math.comb(n, k) * 0.5 ** n
+                                   for k in range(min(b, c) + 1)))
+            ax.annotate(f"+{c}/-{b}  p={p:.2f}", (cpc, solved),
+                        textcoords="offset points",
+                        xytext=(offs[label][0], offs[label][1] - 8),
+                        fontsize=7, color="0.4", ha=ha)
+    ax.set_xlabel("tool calls per solved task (lower is better)")
+    ax.set_ylabel("solved tasks (of 20)")
+    ax.set_ylim(11.5, 20.4)
+    ax.set_xlim(2.0, 3.9)
+    no_overlap(fig)
+    fig.tight_layout()
+    fig.savefig(HERE / "fig_goose.png")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     fig_race()
     fig_arms()
+    fig_goose()
     print("wrote fig_race.png, fig_arms.png")
