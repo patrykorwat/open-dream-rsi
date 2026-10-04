@@ -340,6 +340,21 @@ entirely where the baseline already solves cheaply---guidance can only pay
 its perturbation tax there, and effort belongs to families with measured
 headroom.
 
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{fig_arms.png}
+\caption{Injection-arm study on the live model (20 held-out tasks,
+greedy decode, one endpoint; v8 repair theories and v9 mechanisms each
+operationalize one published idea). Every arm is scored against the
+contemporaneous cold control run in the same sitting (squares). No arm
+beats cold; the gate rejects all of them. The end-position arm (w4) uses
+the \emph{identical} text that is measured-safe mid-prompt (t1) --- frame
+safety is position-dependent. Reactive-on-error injection (w2) pays zero
+prompt tax on clean episodes: the architecturally right channel, but with
+no benefit where cold is already optimal.}
+\label{fig:arms}
+\end{figure}
+
 \hdr{Retrieval feedback.} At proposal time the top \emph{active} lessons for
 the category are retrieved (trigger-match, ranked by
 \texttt{wins}/\texttt{uses} counters updated from subsequent verification
@@ -620,22 +635,46 @@ calls at equal solve quality; on a suite where greedy exploration solves
 nothing, replay-gated policies reach 77\% and remembered knowledge 73\%
 cumulative (100\% by cycle~5 for both) at $\sim$4$\times$ better cost-per-solve
 than random escape. All artefacts pass structural gates before touching the
-loop; the gate, not trust, decides. One corollary of the hazard analysis is
+loop; the gate, not trust, decides.
+
+
+One corollary of the hazard analysis is
 architectural: curation is bounded by the episode boundary --- measured on a
 production session store (30 days, 4914 error events across 459 classes;
 anonymized replay fixture shipped in \texttt{fixtures/}), a recurring error
 class re-appears within the same session after a median gap of 4.3 minutes
 (p25 0.6, p90 56.4; 58\% of repeats under 7 minutes), and \emph{half} of all
 failing tool calls are repeats of a class the same session had already
-suffered. No schedule wakes that fast. The shipped answer therefore splits
+suffered. No schedule wakes that fast (Figure~\ref{fig:race}). The shipped answer therefore splits
 the problem: cross-session knowledge stays in the gated, headroom-aware
 curator above, while sub-episode reaction is handled mechanically in the
 tool-execution layer (the host-agnostic error-class sentinel in
 \texttt{plugins/}, with adapters for Hermes and Claude Code, whose notes
 follow the same declarative, reactive-injection rules the replay arms
-validated: on the audit stream the engine annotated 2101 of 4914 failing
-calls --- one note per class per session, zero tax on clean calls).
+validated: on the audit stream --- recorded on a production Hermes install
+--- the engine annotated 2101 of 4914 failing calls, one note per class per
+session, zero tax on clean calls. The measurement and the mechanism feed
+back into the hosts themselves: on Hermes the sentinel now owns sub-episode
+error reaction outright (the curator's schedule cannot reach that horizon),
+and the headroom verdict throttles Hermes-side curation as well --- the
+loop measures its own categories' economics and stops paying curator and
+gate calls where the baseline already solves cheaply. Optimizing the host's
+own memory machinery is therefore not aspirational: it is what the shipped
+code does on the machine where these numbers were collected.
 
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{fig_race.png}
+\caption{The reaction-time race, measured on a production agent's session
+store (30 days; within-session gaps between consecutive failures of the
+same normalized error class, n=1972, log scale). Half of all failing
+tool calls repeat a class the same session already suffered. A curator
+that acts at episode end --- any curator, in any host --- cannot see a
+signal that fires a median of 4.3 minutes into the same session; the
+weekly skill-curator is three orders of magnitude slower still. The
+sentinel reacts inside the tool-execution layer, in the same turn.}
+\label{fig:race}
+\end{figure}
 
 \begin{thebibliography}{99}
 \bibitem{dreamrsi} Zheng et al., \emph{Dream-RSI: Recursive

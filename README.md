@@ -381,6 +381,11 @@ principle the KB arms validated. Adapters:
 * **Any command-hook host**: `sentinel check` on stdin JSON (exit 0 always;
   annotate, never gate).
 
+The audit and the mechanism run on the authors' production Hermes install:
+the sentinel owns sub-episode error reaction there outright, and the
+headroom verdict throttles Hermes-side curation too — we optimize the host's
+own memory machinery, not just a benchmark loop.
+
 Tests ship with both layers (engine + adapters, faked contexts, CLI
 contract). It is the practical complement to the paper's negative results:
 curation stays where it demonstrably helps (cross-session knowledge with
