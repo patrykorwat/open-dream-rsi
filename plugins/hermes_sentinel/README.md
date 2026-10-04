@@ -2,7 +2,8 @@
 
 Thin adapter over the host-agnostic engine (`open_dream_rsi/sentinel.py`).
 What the sentinel is and why (error-class repeats re-appear within a
-session after a median of ~1.5 minutes — faster than any curator schedule):
+session after a median gap of 4.3 minutes (p25 0.6; half of all failing calls
+are same-class repeats) — faster than any curator schedule:
 see the benchmark section of the repo README.
 
 ## Install

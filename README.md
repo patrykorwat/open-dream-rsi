@@ -355,8 +355,11 @@ with zero gains and are rejected.
 Every finding above shares one structural weakness: curation is *epistemic* —
 it reads outcomes after episodes end and wakes on a schedule (a weekly
 curator in the host agent). Measured on a real install's session store
-(256k messages / 30 days): a recurring error class re-appears **within one
-session** after a median of ~1.5 minutes. No schedule can win that race, so
+(~60k tool messages / 30 days; anonymized replay fixture in
+`fixtures/sentinel_audit.json`): a recurring error class re-appears
+**within one session** after a median gap of 4.3 minutes (p25 0.6, p90
+56.4; 58% of repeats under 7 minutes), and half of all failing calls are
+same-class repeats. No schedule can win that race, so
 the shipped answer moves the mechanism into the tool-execution layer of the
 host runtime. The core is host-independent (`open_dream_rsi/sentinel.py`:
 error-class fingerprints with URLs/paths/numbers/hexes normalized away —

@@ -621,15 +621,20 @@ nothing, replay-gated policies reach 77\% and remembered knowledge 73\%
 cumulative (100\% by cycle~5 for both) at $\sim$4$\times$ better cost-per-solve
 than random escape. All artefacts pass structural gates before touching the
 loop; the gate, not trust, decides. One corollary of the hazard analysis is
-architectural: curation is bounded by the episode boundary — measured on a
-production session store, recurring error classes re-appear within one
-session at a median of $\sim$1.5 minutes, two orders of magnitude faster than
-any schedule can wake. The shipped answer therefore splits the problem:
-cross-session knowledge stays in the gated, headroom-aware curator above,
-while sub-episode reaction is handled mechanically in the tool-execution
-layer (the host-agnostic error-class sentinel in \texttt{plugins/}, with
-adapters for Hermes and Claude Code, whose notes follow the same
-declarative, reactive-injection rules the replay arms validated).
+architectural: curation is bounded by the episode boundary --- measured on a
+production session store (30 days, 4914 error events across 459 classes;
+anonymized replay fixture shipped in \texttt{fixtures/}), a recurring error
+class re-appears within the same session after a median gap of 4.3 minutes
+(p25 0.6, p90 56.4; 58\% of repeats under 7 minutes), and \emph{half} of all
+failing tool calls are repeats of a class the same session had already
+suffered. No schedule wakes that fast. The shipped answer therefore splits
+the problem: cross-session knowledge stays in the gated, headroom-aware
+curator above, while sub-episode reaction is handled mechanically in the
+tool-execution layer (the host-agnostic error-class sentinel in
+\texttt{plugins/}, with adapters for Hermes and Claude Code, whose notes
+follow the same declarative, reactive-injection rules the replay arms
+validated: on the audit stream the engine annotated 2101 of 4914 failing
+calls --- one note per class per session, zero tax on clean calls).
 
 
 \begin{thebibliography}{99}

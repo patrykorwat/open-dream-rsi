@@ -2,9 +2,10 @@
 
 Why: curation in any agent host is epistemic — it reads outcomes after
 episodes end and wakes on a schedule. Measured on a production session
-store (256k messages / 30 days): a recurring error class re-appears
-WITHIN one session after a median of ~1.5 minutes. No schedule wins that
-race, so the reaction must sit in the tool-execution layer. The logic
+store (30 days, ~60k tool messages): a recurring error class re-appears
+WITHIN one session after a median gap of 4.3 minutes (p25 0.6, p90 56.4;
+anonymized replay fixture: fixtures/sentinel_audit.json). No schedule
+wins that race, so the reaction must sit in the tool-execution layer. The logic
 below is host-independent; per-host adapters just normalize their native
 event into ``observe()`` and forward the returned note into whatever
 context channel the host provides:

@@ -9,8 +9,8 @@ the durable ledger, the declarative note); this adapter only:
 
 Why the mechanism lives here and not in the skill curator: curation wakes
 on a schedule (weekly default) while recurring error classes re-appear
-WITHIN one session after a median of ~1.5 min (measured on a production
-session store). Reaction must be synchronous with tool execution.
+WITHIN one session after a median gap of 4.3 min (measured on a production
+session store; anonymized replay fixture: fixtures/sentinel_audit.json). Reaction must be synchronous with tool execution.
 
 The note is reactive (failing results only — zero tax on clean calls) and
 declarative (recurrence facts + explicit stop condition, never a command;
