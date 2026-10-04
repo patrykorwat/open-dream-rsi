@@ -1,4 +1,4 @@
-# Open Dream-RSI 🌙🤖
+# Open Dream-RSI
 
 > **📄 Preprint:** *Open Dream-RSI: An Open-Source Library for Recursive
 > Self-Improvement Around a Frozen LLM, with Replay-Gated Learned Policies and
@@ -7,77 +7,48 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/tests-211%20passing-brightgreen)](tests/)
 
-An open, lightweight and general-purpose implementation of the **Dream-RSI**
-(*Recursive Self-Improvement through Evolving Worlds*) architecture described in
-research work by Google & Google DeepMind.
+An open, dependency-free implementation of **Dream-RSI** (*Recursive
+Self-Improvement through Evolving Worlds*, Zheng et al., Google / Google
+DeepMind / UMD, [arXiv:2609.14858](https://arxiv.org/abs/2609.14858)).
 
-**Open Dream-RSI** lets LLM agents optimize their exploration and problem-solving
-strategies for hard tasks (e.g. GPU kernel authoring, algorithmic optimization)
-**without modifying model weights** and with a minimal number of expensive API calls.
+The model stays **frozen**. What improves is everything *around* it: the
+exploration policy, the verified-solution library, and the curated lessons
+learned from failures. The loop optimises its own problem-solving strategy
+between runs — persistent memory, replay-gated promotion, budget guards —
+and never touches model weights.
 
----
-
-## 🎯 How it works
-
-Traditional *self-improvement* loops burn thousands of LLM queries on trial and
-error in the real world. **Open Dream-RSI** works in two phases:
-
-1. **Online Execution:** The agent attempts the task in the real world, building a *Discovery Tree*.
-2. **Offline Dreaming:** Instead of running expensive real-world rollouts, the agent "dreams" over the execution history. It evaluates thousands of strategy variants in an offline simulator, consuming zero additional external tool calls.
-3. **Deployment:** The best generated strategy is shipped back into online execution.
-
-Beyond the parameter-level dreaming, the loop also closes section 3 of the
-paper ("dreaming with code"): each cycle, the LLM **rewrites the exploration
-policy itself** as a small Python program (`choose_action(frontier, step)`).
-Candidates are statically validated (AST gate), executed only in an isolated
-sandbox (`python -I`, scrubbed env, group-killing timeout, memory/CPU/thread
-limits) and scored by **off-policy replay**
-on the recorded discovery history — a candidate replaces the incumbent only
-when it demonstrably beats it (the incumbent is re-scored on the *current*
-tree, not trusted at its stored score). A crashing or cheating policy can never break
-the loop: expansion falls back to the greedy baseline.
+**Zero runtime dependencies** (stdlib only), ~6k lines of library code,
+~2.5k lines of tests, MIT license, installable with no build step.
 
 ---
 
-## 🤖 LLM integration (OpenAI-compatible)
+## How it works
 
-The agent talks to any **OpenAI-compatible** endpoint — just point it at a
-`POST {base_url}/chat/completions` server:
+The loop alternates two phases:
 
-| Provider | Preset | Base URL | API key env var |
-|---|---|---|---|
-| OpenAI | `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` |
-| **Cursor Models API** | `cursor` | `https://api2.cursor.sh` | `CURSOR_API_KEY` |
-| Local (vLLM / Ollama / LM Studio) | `local` | `http://127.0.0.1:8000/v1` | `OPENAI_API_KEY` |
+1. **Online execution** — the agent attempts each task with the real LLM and
+   a sandboxed verifier, appending every attempt to a per-task
+   *Discovery Tree* (code, tests feedback, score, one-line plan).
+2. **Offline dreaming** — instead of paying for real-world rollouts, the agent
+   "dreams" over the recorded history: thousands of strategy variants are
+   scored in an in-process replay simulator at zero external-call cost. The
+   best parameters, programs and recipes are persisted and steer the next cycle.
 
-```python
-from open_dream_rsi import LLMConfig, OpenAICompatibleClient, DreamAgent, DreamEngine, ReplaySimulator, DiscoveryTree
-
-# OpenAI (reads OPENAI_API_KEY from the environment)
-client = OpenAICompatibleClient()
-
-# Cursor Models API (reads CURSOR_API_KEY from the environment)
-client = OpenAICompatibleClient(LLMConfig.from_preset("cursor"))
-
-# Any other OpenAI-compatible server
-client = OpenAICompatibleClient(LLMConfig(base_url="http://127.0.0.1:8000/v1",
-                                          api_key="...", model="my-model"))
-
-tree = DiscoveryTree()
-dreamer = DreamEngine(simulator=ReplaySimulator(tree))
-dreamer.run_offline_optimization(iterations=100)
-agent = DreamAgent(dreamer=dreamer, client=client)
-```
-
-API keys are **only** read from environment variables — never hard-code them.
-The core package has zero external dependencies (stdlib `urllib` transport).
+Beyond parameter-level dreaming, the loop closes section 3 of the paper
+("dreaming with code"): each cycle the LLM may **rewrite the exploration
+policy itself** as a small Python program, `choose_action(frontier, step)`.
+Candidates are statically validated (AST gate), executed only in a hardened
+subprocess sandbox, and scored by **counterfactual replay rollout** on the
+recorded tree. A candidate replaces the incumbent only on evidence — and the
+incumbent is re-scored on the *current* tree, not trusted at its stored score.
+A crashing or cheating policy can never break the loop: expansion falls back
+to the greedy baseline.
 
 ---
 
-## 🚀 Quick start
-
-### Installation
+## Quick start
 
 ```bash
 git clone https://github.com/patrykorwat/open-dream-rsi.git
@@ -85,76 +56,7 @@ cd open-dream-rsi
 pip install -e .
 ```
 
-### Basic usage
-
-```python
-from open_dream_rsi import DiscoveryTree, DreamEngine, ReplaySimulator
-
-# 1. Initialize the history tree
-history = DiscoveryTree()
-
-# 2. Create the replay simulator
-simulator = ReplaySimulator(history)
-
-# 3. Run the offline "dreaming" loop
-dreamer = DreamEngine(simulator=simulator)
-best_policy = dreamer.run_offline_optimization(iterations=100)
-
-print(f"Optimized exploration policy: {best_policy}")
-```
-
-Full runnable example (online LLM loop + offline dreaming): `examples/optimize_kernel.py`.
-
----
-
-## 🖥️ Live dashboard
-
-Watch the loop work in a browser — one command, no dependencies:
-
-```bash
-python -m open_dream_rsi dashboard                      # mock LLM, zero setup, port 8765
-python -m open_dream_rsi dashboard --provider cursor    # real model via Cursor Models API
-python -m open_dream_rsi dashboard --host 0.0.0.0       # LAN access (default)
-```
-
-Dark single-page UI: KPIs (cycles / solved / API budget / dream iterations),
-live event feed, per-task attempt boards with score bars and code diff-downs,
-dreamed-policy gauges per category and the learned recipe library.
-
-**Supervisor overview** — KPIs on top, live event feed on the left:
-
-![Open Dream-RSI dashboard overview](docs/screenshots/odr_hero.png)
-
-**Task board** — online attempts per task with verification score bars and
-the candidate code that produced them:
-
-![Task board with scored attempts](docs/screenshots/odr_tasks.png)
-
-**Dreamed policies & recipe library** — policy parameters learned offline per
-category (temperature / exploration depth) and the verified solutions the
-loop has taught itself, persisted across restarts:
-
-![Dreamed policies and recipe library](docs/screenshots/odr_recipes.png)
-
----
-
-## 🤖 Autonomous RSI loop (Hermes-style supervisor)
-
-The runtime runs the improvement cycle **by itself**, with no human in the loop:
-
-```
-wake -> pick tasks -> online attempt (LLM + sandbox) -> offline dream
-     -> persist policy / recipe / tree -> sleep -> wake ...
-```
-
-```bash
-export OPENAI_API_KEY=...                     # or CURSOR_API_KEY + --provider cursor
-python -m open_dream_rsi loop --tasks tasks.json --interval 300   # daemon
-python -m open_dream_rsi loop --tasks tasks.json --once           # single cycle (cron)
-python -m open_dream_rsi status                                    # learned policies + recipes
-```
-
-`tasks.json`:
+Queue tasks in `tasks.json`:
 
 ```json
 [{
@@ -166,100 +68,127 @@ python -m open_dream_rsi status                                    # learned pol
 }]
 ```
 
-What makes it self-improving between runs (persistent `--memory` dir):
+Run the supervisor — as a daemon, or as a single cycle from cron:
 
-* **Dreamed policies** (`policies.json`) — the next cycle of a category starts
-  with the policy parameters learned by the last one.
-* **Recipe library** (`recipes.json`) — best verified solutions per category,
-  replayed as warm starts, so re-solving is nearly free.
-* **Archived discovery trees** (`trees/`) — offline dreaming always has history.
-* **Thought-conditioned branching** (on by default) — each attempt records its
-  one-line `PLAN:`, proposals see the tried-idea ledger, and expansion leaves
-  a branch whose idea keeps repeating itself (`--no-thoughts` to ablate).
-* **Completion judge** (on by default, `--no-judge` to ablate) — tasks queued
-  **without** tests (a `criteria` string instead) get an automatic verdict:
-  the sandbox first proves the code executes (hard fail without any LLM
-  call), then the frozen model judges the evidence against the criteria with
-  a strict-JSON, fail-closed protocol. Tests always dominate: the judge is
-  never consulted for test-bearing tasks and can never override a failing
-  verifier. Judge calls count against the same budget guard.
-* **Event log** (`events.jsonl`) — append-only audit of every decision.
+```bash
+export OPENAI_API_KEY=***            # any OpenAI-compatible endpoint
+python -m open_dream_rsi loop --tasks tasks.json --interval 300
+python -m open_dream_rsi loop --tasks tasks.json --once    # cron-friendly
+python -m open_dream_rsi status                             # what it has learned
+```
 
-Guards: `--budget` caps API calls per cycle (dreaming stays free), candidate
-code runs in an isolated subprocess (`python -I`, scrubbed env, timeout that
-kills the whole process group, address-space/CPU/thread limits) so a
-misbehaving solution cannot reach your API keys or outlive its timeout.
-The subprocess is defence in depth, **not a container**: it does not restrict
-filesystem or network access. For hostile task sources set `ODR_SANDBOX_CMD`
-to a [bubblewrap](https://github.com/containers/bubblewrap)/nsjail wrapper
-(e.g. `bwrap --unshare-all --die-with-parent --ro-bind / /`) or run the loop
-inside a container. Live walkthrough with a mock
-OpenAI server: `examples/live_loop_demo.py`.
+No key? Everything deterministic still runs: `bench`, `bench-policy`,
+`gate-replay` and the dashboard all use a scripted mock client.
+A full in-process walkthrough with a mock OpenAI server:
+`examples/live_loop_demo.py`.
+
+### What persists between runs (`--memory` dir)
+
+| Artifact | File | Effect |
+|---|---|---|
+| Dreamed policy parameters | `policies.json` | next cycle starts from the last one's optimum |
+| Promoted policy programs | `policy_codes.json` | LLM-written `choose_action` steers expansion |
+| Recipe library | `recipes.json` | verified solutions replayed as warm starts |
+| Knowledge base | `lessons.json` | curated, replay-gated lessons (declarative text) |
+| Discovery trees | `trees/` | offline dreaming always has history |
+| Audit log | `events.jsonl` | append-only record of every decision |
+
+Switches worth knowing: `--no-policy-code`, `--no-knowledge`, `--no-thoughts`,
+`--no-judge` ablate the four optional machinery layers; `--budget N` caps API
+calls per cycle (dreaming stays free).
 
 ---
 
-## 🔌 Plug into Goose / Hermes / Codex / Claude Code / OpenCode / Cowork
+## Providers
+
+The agent talks to any **OpenAI-compatible** `POST {base_url}/chat/completions`
+server. API keys are read **only** from environment variables.
+
+| Provider | Preset | Base URL | Key env var |
+|---|---|---|---|
+| OpenAI | `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` |
+| Cursor Models API | `cursor` | `https://api2.cursor.sh` | `CURSOR_API_KEY` |
+| Local (vLLM / Ollama / LM Studio) | `local` | `http://127.0.0.1:8000/v1` | `OPENAI_API_KEY` |
+| Borrowed from goose config | `goose` | resolved from `~/.config/goose` | — |
+
+Precedence is always: explicit overrides → environment → preset defaults.
+Self-hosted reasoning endpoints get `enable_thinking: false` automatically
+(a thinking-on Qwen otherwise burns the whole completion budget); an HTTP 400
+rejection of that flag triggers a self-heal retry.
+
+Library-level use (no CLI):
+
+```python
+from open_dream_rsi import (DiscoveryTree, DreamEngine, ReplaySimulator,
+                            DreamAgent, LLMConfig, OpenAICompatibleClient)
+
+client = OpenAICompatibleClient(LLMConfig.from_preset("local"))
+tree = DiscoveryTree()
+dreamer = DreamEngine(simulator=ReplaySimulator(tree))
+dreamer.run_offline_optimization(iterations=100)
+agent = DreamAgent(dreamer=dreamer, client=client)
+```
+
+---
+
+## Plugging into your coding agent (MCP)
 
 The loop speaks **MCP** — stdio for local agents (Goose, Hermes, Codex CLI,
-Claude Code, OpenCode, Zed), Streamable-HTTP (`mcp --http`) for remote
-connectors (Claude Cowork / claude.ai). One config block and your everyday
-coding agent can queue tasks for the dreamer, pull back verified recipes and
-consult the curated lessons — with **zero LLM setup**: the dreamer resolves
-the brain itself (env vars → your local goose config → localhost vLLM).
+Claude Code, OpenCode, Zed) and Streamable-HTTP (`mcp --http --port 8800`)
+for remote connectors (Claude Cowork / claude.ai). One config block and your
+everyday agent can queue tasks for the dreamer, pull verified recipes and
+consult curated lessons — **zero extra LLM setup**: the dreamer resolves its
+own brain (env → local goose config → localhost vLLM).
 
 ```bash
-# OpenCode: add to opencode.json      Goose: add to ~/.config/goose/config.yaml
 python3 -m open_dream_rsi mcp --tasks ./tasks.json --memory ./.dream_rsi
 ```
 
-Already inside goose and want the dreamer to dream with **goose's own model**
-(no second API key)? One command does everything — `./scripts/odr_goose_setup.sh`
-diagnoses the install, starts the loopback model-borrowing proxy and writes
-the extension block into `~/.config/goose/config.yaml` for you.
+Already inside goose and want the dreamer to use **goose's own model** (no
+second API key)? `./scripts/odr_goose_setup.sh` diagnoses the install, starts
+the loopback model-borrowing proxy (`python -m open_dream_rsi proxy`, port
+8799) and writes the extension block into `~/.config/goose/config.yaml` for
+you.
 
-Copy-paste instructions for both harnesses (plus Claude Code/Cursor/Zed):
+Copy-paste instructions for every supported host:
 **[docs/integrations.md](docs/integrations.md)**.
 
 ---
 
-## 📊 Benchmark
+## Benchmarks
 
-`bench` compares two arms on the same task suite and the same (scripted or real)
-model — the only difference is the library machinery:
+All headline numbers below are produced by a **scripted solver** and are
+claims about the *machinery* (gates, sandboxes, promotion, retrieval), not
+about any particular model. Every figure re-measures with one command.
 
-```bash
-python -m open_dream_rsi bench --cycles 10 --markdown                # deterministic mock, no key
-python -m open_dream_rsi bench --provider cursor --cycles 10         # your own model
-```
+### API efficiency — `bench`
 
-| arm | solves | API calls | calls / task·cycle | dream its | wall (s) |
-|---|---|---|---|---|---|
-| cold_baseline (fresh memory each cycle) | 50 | 150 | 3.0 | 0 | 2.2 |
-| dream_rsi_loop (policies + recipes + dreaming) | 50 | 69 | 1.38 | 3000 | 2.1 |
-
-**~54% fewer API calls at equal solve quality** on the built-in suite (10 cycles
-× 5 tasks, mock client — deterministic and key-free; the model arm is a
-constant, so the delta comes purely from warm starts and persistent policies).
-This mirrors the Dream-RSI paper's headline result — competitive discovery
-quality at substantially reduced online budget — at library scale.
-
-### 🧬 Does the learned *policy* actually help? The decoy-trap benchmark
-
-Solve-rate graphs can't answer that — on easy suites every strategy solves
-everything. `bench-policy` measures exploration on a **decoy-trap suite**: each
-task hides its fix behind a *low-scoring* branch (passes 1/3 tests), past a
-*plausible decoy* that passes 2/3 forever. A score-greedy loop locks onto the
-decoy and starves; escaping requires structural exploration — exactly what the
-LLM-written policies (section 3) and the curated knowledge base (section 4)
-are for. Four arms share one scripted solver and budget; only the machinery
-differs:
+Two arms, one task suite, one (mock) model; the only difference is the
+library machinery:
 
 ```bash
-python -m open_dream_rsi bench-policy --cycles 8 --format md   # deterministic, no key
-python -m open_dream_rsi bench-policy --format svg --out docs/screenshots/odr_policy_bench.svg
+python -m open_dream_rsi bench --cycles 10 --markdown
 ```
 
-![Decoy-trap policy benchmark: greedy vs epsilon-greedy vs replay-gated LLM-written policies vs curated knowledge base vs thought-guided branching](docs/screenshots/odr_policy_bench.png)
+| arm | solves | API calls | calls / task·cycle | dream its |
+|---|---|---|---|---|
+| cold_baseline (fresh memory each cycle) | 50 | 150 | 3.0 | 0 |
+| dream_rsi_loop (policies + recipes + dreaming) | 50 | 69 | 1.38 | 3000 |
+
+**54% fewer API calls at equal solve quality** — competitive discovery
+quality at a reduced online budget, at library scale.
+
+### Exploration quality — `bench-policy` (decoy traps)
+
+Solve-rate graphs saturate on easy suites and cannot tell good exploration
+from luck, so `bench-policy` hides each fix behind a *low-scoring* branch
+(passes 1/3 tests) past a *plausible decoy* (passes 2/3 forever). A
+score-greedy loop locks onto the decoy and starves; escaping requires
+structural exploration. Five arms, one scripted solver, one budget:
+
+```bash
+python -m open_dream_rsi bench-policy --cycles 8 --format md
+```
 
 | arm | solves | solve rate | API calls | calls / solve | policy calls | curator calls |
 |---|---|---|---|---|---|---|
@@ -269,202 +198,187 @@ python -m open_dream_rsi bench-policy --format svg --out docs/screenshots/odr_po
 | **knowledge_curator** | **88/120** | **73%** | 332 | 3.77 | 0 | 34 |
 | **thought_guided** | **120/120** | **100%** | **164** | **1.37** | 0 | 0 |
 
-Score-greedy exploration solves **nothing** and burns its whole budget
-re-polishing the decoy. Random ε-escape solves a minority, slowly. The loop
-instead asks the LLM for a policy program per category, validates it in the
-sandbox, scores it by **counterfactual replay rollout** on the recorded
-discovery tree, and promotes only on evidence — then steers online expansion
-with the promoted code, reaching **100% solve rate by cycle 5** while spending
-**fewer total API calls** than ε wasted on luck. The candidate that wins is
-generated by the model at runtime; the gate, not trust, decides.
+- **evolved_policy** — the loop asks the LLM for a policy program per
+  category, validates and replay-scores it, and promotes only on evidence.
+  100% solve rate by cycle 5 while spending *fewer total calls* than ε
+  wasted on luck.
+- **knowledge_curator** — ε-greedy with zero policy calls: every escape
+  above the ε baseline came from remembered knowledge (73%, at parity with
+  the gated policies at ~80% of ε's calls).
+- **thought_guided** (library default) — each attempt records its one-line
+  `PLAN:`; expansion leaves a branch as soon as its idea repeats itself.
+  With ε forced to 0 and no policy/curator calls it escapes every trap
+  **from cycle 1**; the ledger-only ablation (same text in prompts, pick
+  disabled) collapses back to the baselines — the win is the expansion
+  rule, not prompt length.
 
-The fifth machinery arm — and the **library default** (`enable_thoughts=True`,
-opt out with `--no-thoughts`) — is **thought-conditioned branching**: every
-attempt records the one-line `PLAN:` the model states before its code
-(`TreeNode.thought`), the proposal prompt carries the task's tried-idea
-ledger, and expansion **leaves a branch as soon as its idea repeats itself**
-— a node whose recorded children carry the same PLAN text is dead-idea
-polishing, so the loop expands the best-outcome node outside that idea
-family instead. The win is pinned to the loop's steering, not to prompt text
-or luck: with ε forced to 0 and zero policy/curator calls it still escapes
-every trap **from cycle 1** (120/120), while the **ledger-only ablation**
-(thoughts recorded and shown, semantic pick disabled) collapses back to the
-baselines (0/120 like greedy, 29/120 like ε) — so the escape comes from
-*leaving dead idea families at expansion time*, not from the model merely
-reading a longer prompt. Every fix also grows only from expanding the
-promising-idea node (asserted), the same ladder the other arms must climb.
+### Would a lesson set have been promoted? `gate-replay`
 
-### 📚 Does the loop get *smarter*, not just cheaper? The knowledge curator
-
-Recipes and policies capture *what* worked; they say nothing about *why*
-attempts fail — the same trap therefore re-buys its tuition fee every run.
-The section-4 **knowledge curator** (the Hermes skills/memory pattern,
-applied to the loop itself) distils verifier failures into short, validated,
-deduplicated **lesson records** (`lessons.json`), retrieves the relevant ones
-into every future proposal, and prunes the ones that demonstrably stop
-helping. Lessons are pure text — never executed — so the gate is structural
-(schema + caps + evidence required) plus a retrieval feedback loop
-(`uses`/`wins` counters drive ranking and eviction). **A fresh lesson is a
-candidate intervention, not knowledge:** it is admitted with `status=staging`,
-invisible to proposal prompts, and only activates after a paired-replay gate
-re-runs the failing task with/without the lesson on the *first-failure*
-snapshot and finds `gains − regressions ≥ 1` with zero solve→fail
-regressions and an explicit stop clause in the text. Live-model replay proved
-trust is not a gate: curated lessons that passed every structural check
-dropped solve-rate 18/20 → 6/20 on a greedy decoder. A follow-up ablation
-localized the hazard precisely: the **same content rewritten as
-declarative facts** (no imperative verbs, neutral frame) scored 18/20 —
-matching the contemporaneous cold baseline (McNemar p=1.0) — while the
-imperative "keep checking" form of those same facts scored 6/20 (12
-paired wins for the declarative form, 0 losses, p<0.001). An exemplar
-worked-example arm and a facts+exemplar arm scored 16/20 and 13/20:
-imitation of a solved example does not anchor termination either. Seven
-further arms — abstract workflows, evidence certificates in the answer
-schema, reactive-on-error notes, end-of-prompt framing — all scored ZERO
-paired gains against the contemporaneous cold baseline (19/20 @ 3.0
-calls/solve); the worst (same safe text moved mid→end of prompt) dropped to
-11/20, p=0.008, because recency makes the model *act on* facts that were
-inert mid-prompt. The loop therefore also enforces a **headroom verdict**
-per category (recent solve-rate < 0.7 or calls/solve > 5; empty history =
-benefit of the doubt) and spends zero curator/gate calls where the baseline
-already solves cheaply — guidance there can only pay its perturbation tax.
-The shipped prompt therefore frames lessons as declarative background, not
-commands, and lessons must still end with an explicit stop condition.
-The gate is what closes
-that hole. The fourth benchmark arm
-proves the gated KB does work, not just sit on disk: it is ε-greedy **with zero
-policy calls** — every escape above the ε baseline came from remembered
-knowledge, reaching 73% — at parity with the 77% of replay-gated policies
-with 3× ε's solves at ~80% of ε's total calls (3.77 calls/solve vs 13.97).
+Applies the shipped promotion rule (`lesson_gate_verdict`) to per-task
+outcome pairs from any recorded replay harness — no model, no GPU:
 
 ```bash
-python -m open_dream_rsi --memory ./mem loop --tasks tasks.json --once  # curator on by default
-python -m open_dream_rsi --memory ./mem status                          # inspect lessons.json
-python -m open_dream_rsi loop --tasks tasks.json --no-knowledge         # ablate the KB
-
-# validate the gate offline on any replay harness's recorded arms (no model, no key):
 python -m open_dream_rsi gate-replay \
   --baseline cold=/tmp/arms.json?label=cold \
   --compare lessons=/tmp/arms.json?label=warm \
   --key task_id --format md
 ```
 
-`gate-replay` applies the shipped promotion rule (`lesson_gate_verdict`) to
-per-task outcome pairs joined on any key — a no-lessons baseline arm versus
-one or more lesson-injected arms recorded by any harness. It answers
-"would the gate have promoted this lesson set?" without a GPU, and reports
-join statistics honestly (unmatched/duplicate rows are counted, never
-silently compared). This is how the gate was validated against the
-18/20 → 6/20 replay above: all three harmful warm arms score net −13 / −6 / −5
-with zero gains and are rejected.
+---
 
-### ⚡ Deployment artifact: the error-class sentinel (host-agnostic)
+## What the loop learned about memory (honest results)
 
-Every finding above shares one structural weakness: curation is *epistemic* —
-it reads outcomes after episodes end and wakes on a schedule (a weekly
-curator in the host agent). Measured on a real install's session store
-(~60k tool messages / 30 days; anonymized replay fixture in
-`fixtures/sentinel_audit.json`): a recurring error class re-appears
-**within one session** after a median gap of 4.3 minutes (p25 0.6, p90
-56.4; 58% of repeats under 7 minutes), and half of all failing calls are
-same-class repeats. No schedule can win that race, so
-the shipped answer moves the mechanism into the tool-execution layer of the
-host runtime. The core is host-independent (`open_dream_rsi/sentinel.py`:
-error-class fingerprints with URLs/paths/numbers/hexes normalized away —
-different arguments, same failure; a durable ledger; one declarative note
-per class per session at a repeat threshold: recurrence facts plus an
-explicit stop condition, never a command — the 7-arm replay showed
-imperative framing measurably extends loops). Clean calls pay zero prompt
-tax — the note rides only failing results, the same reactive-injection
-principle the KB arms validated. Adapters:
+The knowledge curator (section 4) distils verifier failures into short,
+validated, deduplicated **lessons** — pure text, never executed. Live-model
+replay, however, proved that fresh lessons are *hazardous by default*:
 
-* **Hermes** (`plugins/hermes_sentinel/`): `transform_tool_result` hook
-  (the one whose return reaches the model), durable state via the plugin
-  namespace, `/sentinel` slash command; vendors the engine so a plain
-  directory copy installs standalone.
-* **Claude Code** (`plugins/claude_code/`): `PostToolUse` /
-  `PostToolUseFailure` command hooks calling
-  `python -m open_dream_rsi sentinel check --format claude` — the note
-  rides `hookSpecificOutput.additionalContext`.
-* **Any command-hook host**: `sentinel check` on stdin JSON (exit 0 always;
-  annotate, never gate).
+- Structurally perfect lessons (passed every schema/caps gate) dropped
+  solve-rate **18/20 → 6/20** on a greedy decoder: "keep checking"-style
+  advice turns greedy decoding into an over-exploration loop.
+- The same facts rewritten as **declarative background** (no imperative
+  verbs, explicit stop clause): 18/20 — indistinguishable from cold
+  (McNemar p=1.0). The hazard is imperative mood, not content.
+- Seven further published injection strategies (abstract workflows,
+  exemplars, evidence certificates, reactive-on-error notes,
+  end-of-prompt position) scored **zero** paired gains against a
+  contemporaneous cold baseline; moving safe text to the end of the prompt
+  was actively harmful (11/20, p=0.008 — recency makes the model *act* on
+  facts that were inert mid-prompt).
 
-The audit and the mechanism run on the authors' production Hermes install:
-the sentinel owns sub-episode error reaction there outright, and the
-headroom verdict throttles Hermes-side curation too — we optimize the host's
-own memory machinery, not just a benchmark loop.
-
-Tests ship with both layers (engine + adapters, faked contexts, CLI
-contract). It is the practical complement to the paper's negative results:
-curation stays where it demonstrably helps (cross-session knowledge with
-headroom), and everything faster than an episode boundary is handled
-mechanically.
+The shipped design encodes all of that: lessons are `staging` candidates
+that must pass a paired-replay gate (net ≥ 1, **zero** solve→fail
+regressions, explicit stop clause) before any prompt sees them; proposal
+prompts frame the KB as declarative background; and a per-category
+**headroom verdict** (skip curation when recent solve-rate ≥ 0.7 *and*
+calls/solve ≤ 5) spends zero curator/gate calls where the cold baseline
+already wins. Guidance pays a perturbation tax — the loop only pays it
+where there is measurable headroom to spend it against.
 
 ---
 
-## 🔭 Related work & positioning
+## Error-class sentinel (deployment artifact)
 
-* **Dream-RSI: Recursive Self-Improvement through Evolving Worlds**
-  (Zheng et al., Google / Google DeepMind / UMD, [arXiv:2609.14858](https://arxiv.org/abs/2609.14858)) —
-  the paper this library implements. Official repo: [zhengkid/Dream-RSI](https://github.com/zhengkid/Dream-RSI);
-  method explainer: [dream-rsi.com](https://dream-rsi.com/).
-* Since the paper's release (2026-09-14) several **independent implementations** have appeared;
-  this repo is one of them, not the first. Notable peers:
-  [TheAstrayDev/dream-rsi-sdk](https://github.com/TheAstrayDev/dream-rsi-sdk) (model-agnostic
-  adapter SDK, strict replay, seven built-in exploration policies, evidence-based promotion
-  gates — LLM-written policy code on their roadmap),
-  [robinber/dream-rsi-spark](https://github.com/robinber/dream-rsi-spark) (independent section-3
-  implementation: local Qwen + CUDA kernel exploration on NVIDIA DGX Spark), plus agent/skill
-  variants ([lesterppo/hermes-dream-rsi](https://github.com/lesterppo/hermes-dream-rsi),
-  [Harkit2004/dream-rsi-skill](https://github.com/Harkit2004/dream-rsi-skill),
-  [mailbobg/Pi-RSI](https://github.com/mailbobg/Pi-RSI), …).
-  What this repo aims to differentiate on: an **always-on autonomous supervisor** (self-scheduling
-  cycles with an API-call budget guard), **LLM-written exploration policies** with sandboxed
-  counterfactual-replay promotion plus a dedicated decoy-trap benchmark that isolates
-  exploration quality (`bench-policy`, section 3, closed), **persistent cross-run
-  memory** (dreamed policies + verified-solution recipes as warm starts), a live web dashboard,
-  a measurable API-saving
-  benchmark (`bench`), sandboxed verification, zero runtime dependencies, MIT license.
-* **OpenRSI / OpenMLE / Frontis-MA1** ([FrontisAI/OpenRSI](https://github.com/FrontisAI/OpenRSI)) —
-  a different layer of the same problem. They post-train model *weights*
-  (SFT+RL, a 35B meta-evolution agent on MLE-Bench); Open Dream-RSI optimises
+Curation above is *epistemic* — it reads outcomes after episodes end and
+wakes on a schedule. Measured on a real install's session store (~60k tool
+messages / 30 days; anonymized fixture in `fixtures/sentinel_audit.json`):
+a recurring error class re-appears **within one session** at a median gap
+of 4.3 minutes, and half of failing calls are same-class repeats. No
+schedule wins that race, so the mechanism moves into the tool-execution
+layer of the host runtime.
+
+The engine (`open_dream_rsi/sentinel.py`) is host-independent: error-class
+fingerprints (URLs/paths/numbers normalized — different arguments, same
+failure), a durable ledger, and one **declarative** note per class per
+session at a repeat threshold (recurrence facts plus a stop condition,
+never a command — the replay arms showed imperative framing measurably
+extends loops). Clean calls pay zero prompt tax: the note rides only
+failing results. Adapters: Hermes plugin (`plugins/hermes_sentinel/`),
+Claude Code hooks (`plugins/claude_code/`), goose Stop-hook
+(`plugins/goose/`), and plain stdin-JSON CLI for any command-hook host
+(`python -m open_dream_rsi sentinel check`).
+
+---
+
+## Security model
+
+Candidate code — both task solutions and policy programs — runs in a
+hardened subprocess (`open_dream_rsi/sandbox.py`): `python -I`, scrubbed
+environment (only `PATH` — API keys never cross the wall), a timeout that
+kills the **entire process group**, and POSIX address-space / CPU /
+thread-count limits. Policy code additionally passes an AST gate *before*
+any spawn: required entry point, no imports, no dunder access, no
+`__builtins__` reference (name plus constructed-key indexing is itself an
+escape route).
+
+**This is defence in depth, not a container.** The subprocess does not
+restrict filesystem or network access, and an AST gate cannot be provably
+complete against code that is not statically gated. For hostile task
+sources set `ODR_SANDBOX_CMD` to a
+[bubblewrap](https://github.com/containers/bubblewrap)/nsjail wrapper
+(e.g. `bwrap --unshare-all --die-with-parent --ro-bind / /`) or run the
+loop inside a container.
+
+---
+
+## Live dashboard
+
+One command, no dependencies, stdlib http server:
+
+```bash
+python -m open_dream_rsi dashboard                   # mock LLM, port 8765
+python -m open_dream_rsi dashboard --provider cursor # real model
+python -m open_dream_rsi dashboard --host 0.0.0.0    # LAN access
+```
+
+Dark single-page UI: KPIs (cycles / solved / API budget / dream iterations),
+live event feed, per-task attempt boards with score bars and code diff-downs,
+dreamed-policy gauges per category and the learned recipe library.
+
+---
+
+## Positioning
+
+- **The paper this implements:** Dream-RSI
+  ([arXiv:2609.14858](https://arxiv.org/abs/2609.14858)); official repo
+  [zhengkid/Dream-RSI](https://github.com/zhengkid/Dream-RSI), explainer
+  [dream-rsi.com](https://dream-rsi.com/).
+- **Peer implementations** (this repo is an independent open one, not the
+  first): [TheAstrayDev/dream-rsi-sdk](https://github.com/TheAstrayDev/dream-rsi-sdk)
+  (adapter SDK, strict replay; LLM-written policies on their roadmap),
+  [robinber/dream-rsi-spark](https://github.com/robinber/dream-rsi-spark)
+  (local Qwen + CUDA kernel exploration), plus skill variants
+  ([hermes-dream-rsi](https://github.com/lesterppo/hermes-dream-rsi),
+  [dream-rsi-skill](https://github.com/Harkit2004/dream-rsi-skill),
+  [Pi-RSI](https://github.com/mailbobg/Pi-RSI)).
+  What differentiates this repo: an **always-on autonomous supervisor**
+  with budget guards, **LLM-written exploration policies** gated by
+  counterfactual replay (section 3 closed), a dedicated **decoy-trap
+  benchmark**, persistent cross-run memory, and a **negative-results
+  section on memory** that the loop itself enforces.
+- **OpenRSI / Frontis-MA1** ([FrontisAI/OpenRSI](https://github.com/FrontisAI/OpenRSI))
+  is a different layer: they post-train *weights*; this library optimises
   the *exploration policy around a frozen model* — no training, no GPU, no
-  weight access. The two are complementary: their trained improver could be
-  the frozen LLM behind our client, our dreaming loop could sit on top of
-  their search. MIT-licensed here; note their stack is CC BY-NC.
+  weight access. Complementary: their trained improver could be the frozen
+  LLM behind our client.
 
 ---
 
-## 🧩 Module architecture
+## Module architecture
 
-* `open_dream_rsi.core.tree`: Stores the agent's hypothesis, result and action history.
-* `open_dream_rsi.core.simulator`: Simulates state transitions without invoking the external environment.
-* `open_dream_rsi.core.dreamer`: Offline optimization loop over generated simulations.
-* `open_dream_rsi.core.agent`: LLM agent abstraction driven by the rewarded policy.
-* `open_dream_rsi.loop`: `AutoRSIRuntime` — autonomous supervisor (schedule, budget, feedback loop).
-* `open_dream_rsi.memory`: `DreamMemory` — persistent policies, recipes, trees, event log.
-* `open_dream_rsi.tools`: `CodeVerifier` — sandboxed execution of candidate solutions.
-* `open_dream_rsi.cli`: `python -m open_dream_rsi loop|status|dashboard|bench|mcp` entry point.
-* `open_dream_rsi.mcp`: MCP stdio server — exposes the loop to OpenCode, Goose and any MCP harness.
-* `open_dream_rsi.bench`: two-arm API-efficiency benchmark (dreaming vs cold baseline).
-* `open_dream_rsi.llm`: OpenAI-compatible client (OpenAI, Cursor Models API, local servers).
-* `open_dream_rsi.utils.evaluator`: Scoring and ranking of policies over the recorded history.
-* `open_dream_rsi.sentinel`: host-agnostic error-class sentinel engine (classification,
-  normalized signatures, durable ledger, declarative note).
-* `plugins/hermes_sentinel`: Hermes adapter (transform_tool_result hook + /sentinel command,
-  vendored engine for standalone copy-install).
-* `plugins/claude_code`: Claude Code adapter (PostToolUse/PostToolUseFailure settings snippet
-  calling `python -m open_dream_rsi sentinel check`).
-* `plugins/goose`: goose adapter (Stop-hook reactive delivery; pairs with the
-  MCP server below — goose has no post-tool injection channel).
-* `open_dream_rsi.mcp_server`: stdlib MCP stdio server — `sentinel_check` as a
-  pull tool + sandbox serving for cross-agent benchmarks (goose arms measured:
-  reactive delivery cost 0 solves vs cold, pull-based access cost 3).
-* `patches/`: host-core patches as `.patch` files (reactive curator cadence:
-  `curator.due_minutes` — 90.7% of same-class error repeats arrive <60 min).
+| Module | Role |
+|---|---|
+| `core.tree` | DiscoveryTree — hypotheses, results, actions, thoughts |
+| `core.simulator` | replay simulation without touching the environment |
+| `core.dreamer` | offline optimisation over recorded history |
+| `core.agent` | LLM agent driven by the rewarded policy |
+| `core.policygen` | policy generation, AST gate, rollout scoring, promotion |
+| `core.curator` | lesson distillation, headroom verdict, gate verdict |
+| `core.judge` | completion judge for test-less (`criteria`) tasks |
+| `loop` | `AutoRSIRuntime` — the autonomous supervisor |
+| `memory` | `DreamMemory` — policies, recipes, lessons, trees, events |
+| `sandbox` | `run_isolated` — the single untrusted-code execution boundary |
+| `tools` | `CodeVerifier` — sandboxed verification of candidate solutions |
+| `llm` | OpenAI-compatible client (stdlib `urllib` transport) |
+| `cli` | `loop / status / dashboard / bench / bench-policy / gate-replay / mcp / proxy / sentinel` |
+| `mcp`, `mcp_server` | MCP stdio server for loop tools and sentinel checks |
+| `proxy` | loopback OpenAI-compatible proxy borrowing goose's upstream |
+| `dashboard` | zero-dependency live web UI |
+| `gate_replay` | offline validation of the lesson promotion rule |
+| `sentinel` | host-agnostic error-class sentinel engine |
+| `utils.goose` | goose config resolver (CLI + desktop dialects, keychain) |
+| `plugins/*` | Hermes / Claude Code / goose adapters |
 
----
+## Tests
 
-## 📜 License
+```bash
+python -m unittest discover -s tests          # or: pytest tests/ -q
+```
 
-This project is licensed under the **MIT** license — see the [LICENSE](LICENSE) file for details.
+211 tests, stdlib-only: benchmark behavioural contracts (greedy must solve
+nothing; the gated arm must dominate ε; the rollout must be prefix-only),
+sandbox escape regressions, gate semantics, MCP protocol, goose config
+dialects.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
