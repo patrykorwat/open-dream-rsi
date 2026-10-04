@@ -78,6 +78,23 @@ class ToolTests(unittest.TestCase):
         self.assertTrue(res["result"]["isError"])
         self.assertIn("category", res["result"]["content"][0]["text"])
 
+    def test_criteria_task_roundtrips_into_the_runtime(self):
+        # Regression (external review): odr_add_task accepts `criteria` for
+        # test-less tasks; the loop's Task dataclass must then accept the
+        # stored dict via Task(**t) — no TypeError at run_once time.
+        args = {"task_id": "crit1", "category": "misc",
+                "prompt": "Write is_even(n).",
+                "criteria": "is_even(2) is True, is_even(3) is False",
+                "tasks_file": self.tasks}
+        out = payload(tool("odr_add_task", args))
+        self.assertTrue(out["added"])
+        stored = json.loads(Path(self.tasks).read_text(encoding="utf-8"))
+        self.assertEqual(stored[0]["criteria"], args["criteria"])
+        from open_dream_rsi.loop import Task
+        task = Task(**stored[0])
+        self.assertEqual(task.criteria, args["criteria"])
+        self.assertEqual(task.tests, [])
+
     def test_recipes_and_lessons_empty_memory_is_clean(self):
         out = payload(tool("odr_recipes", {"category": "math", "memory": self.memory}))
         self.assertFalse(out["found"])

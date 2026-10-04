@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from open_dream_rsi.core.tree import DiscoveryTree
+from open_dream_rsi.sandbox import run_isolated
 
 #: Weight of branch diversity in the rollout score (the paper's beta_2:
 #: replay objectives reward visiting *different* branches, not just high-
@@ -94,6 +95,11 @@ _BANNED_NAMES = frozenset({
     "exec", "eval", "compile", "open", "input", "__import__", "globals",
     "locals", "vars", "dir", "getattr", "setattr", "delattr", "breakpoint",
     "exit", "quit", "memoryview", "object", "type", "super",
+    # The exec namespace carries __builtins__; referencing it by NAME and
+    # indexing with a constructed key ("__imp" + "ort__") bypasses both the
+    # banned-name list and the leading-underscore attribute rule, so the
+    # name itself must be banned (found by external review, 2026-10).
+    "__builtins__", "builtins",
 })
 
 
@@ -274,10 +280,9 @@ class PolicySandbox:
         fr_path.write_text(json.dumps(frontier), encoding="utf-8")
         harness_path.write_text(_POLICY_HARNESS, encoding="utf-8")
         try:
-            proc = subprocess.run(
+            proc = run_isolated(
                 [sys.executable, "-I", str(harness_path), str(src_path), str(fr_path), str(step)],
-                capture_output=True, text=True, timeout=self.timeout,
-                env={"PATH": "/usr/bin:/bin"},  # no API keys inside the sandbox
+                timeout=self.timeout,
                 cwd=d,
             )
         except subprocess.TimeoutExpired:
@@ -312,10 +317,9 @@ class PolicySandbox:
         world_path.write_text(json.dumps(world), encoding="utf-8")
         harness_path.write_text(_ROLLOUT_HARNESS, encoding="utf-8")
         try:
-            proc = subprocess.run(
+            proc = run_isolated(
                 [sys.executable, "-I", str(harness_path), str(src_path), str(world_path)],
-                capture_output=True, text=True, timeout=self.timeout,
-                env={"PATH": "/usr/bin:/bin"},  # no API keys inside the sandbox
+                timeout=self.timeout,
                 cwd=d,
             )
         except subprocess.TimeoutExpired:

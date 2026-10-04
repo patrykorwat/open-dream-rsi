@@ -67,8 +67,8 @@ thought-guided branching reaches \textbf{100\% from the first cycle}
 at 1.37 calls per solve even with exploration randomness disabled. All headline numbers are produced by a scripted solver and are therefore
 claims about the \emph{machinery} (gates, sandboxes, promotion, retrieval),
 not about any particular model; we state this limitation explicitly.
-The package has zero runtime dependencies, ${\sim}5$k lines of library code,
-${\sim}2$k lines of tests (151 passing), a live dashboard, and a single CLI.
+The package has zero runtime dependencies, ${\sim}6$k lines of library code,
+${\sim}2.5$k lines of tests (210 passing), a live dashboard, and a single CLI.
 \end{abstract}
 
 \vspace{0.5em}
@@ -171,10 +171,14 @@ deployable unattended: the cost per cycle is a declared quantity, not a hope.
 \hdr{Sandbox boundary.} Candidate policy code and model-generated solutions
 are never executed in-process. Execution happens in
 \texttt{python~-I} subprocesses with a scrubbed environment (only
-\texttt{PATH}), a hard timeout (5\,s per decision), and a temp-dir harness.
+\texttt{PATH}), a hard timeout that kills the child's entire process group
+(so backgrounded grandchildren cannot outlive it), POSIX address-space,
+CPU-second and thread-count limits, and a temp-dir harness.
 Invalid code is additionally rejected by AST-level static validation (shape:
-\texttt{def choose\_action(frontier, step)}; no imports, no dunder access)
-before any process spawns. API keys never cross the sandbox wall.
+\texttt{def choose\_action(frontier, step)}; no imports, no dunder access, no
+\texttt{\_\_builtins\_\_} reference---name plus constructed-key indexing is
+itself an escape route) before any process spawns. API keys never cross the
+sandbox wall.
 
 \subsection{Execution schemas}
 \label{sec:execution}
@@ -258,6 +262,10 @@ reject it:
   evidence: $\geq$80\% valid sandbox decisions (\texttt{MIN\_VALIDITY}=0.8)
   over a horizon of $\geq$8 recorded steps (\texttt{MIN\_HORIZON}), and a
   rollout score beating the greedy baseline under the shared objective.
+  When an incumbent exists it is \emph{re-scored on the current tree} rather
+  than trusted at its stored score: the replay world grows between cycles,
+  and an old threshold would admit candidates that are genuinely worse than
+  the incumbent on today's evidence.
   \item \hdr{Call economy.} A category that already solves with its promoted
   policy is not re-asked; regeneration requires 4 new replay steps of
   evidence (\texttt{POLICY\_REGROW\_STEPS}), and all generation calls count
@@ -540,7 +548,7 @@ above the other machinery arms on every set.
 
 \subsection{Test suite}
 
-167 tests pass (2{,}058 non-blank LOC), including the benchmark's behavioural
+210 tests pass (2{,}538 non-blank LOC), including the benchmark's behavioural
 contracts:
 trap-family scores equal their constructed values; the greedy arm must solve
 nothing; the gated-policy arm must dominate $\varepsilon$; the replay rollout
@@ -616,9 +624,13 @@ We state plainly what the numbers do and do not show.
   and asserted by construction; arm contracts enforced by tests (greedy must
   fail, arms must differ causally); determinism lets anyone re-measure with
   one command; five seed sets reported.
-  \item \hdr{Single-node sandbox.} \texttt{python -I} with scrubbed environment
-  and timeout is a real boundary against casual escape but is not a container;
-  deployments with hostile task sources should add OS-level isolation.
+  \item \hdr{Single-node sandbox.} \texttt{python -I} with scrubbed environment,
+  resource limits, and group-killing timeout is a real boundary against casual
+  escape but is not a container: it does not restrict filesystem or network
+  access, and an AST gate can never be provably complete against code that is
+  not statically gated (task solutions). Deployments with hostile task sources
+  should set \texttt{ODR\_SANDBOX\_CMD} to a bubblewrap/nsjail wrapper or run
+  the loop inside a container.
   \item \hdr{Scope.} No weight updates, no multi-agent dynamics, no adversarial
   red-teaming of promoted policies; the knowledge base is per-category text,
   not a structured world model.

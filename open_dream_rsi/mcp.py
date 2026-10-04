@@ -121,7 +121,11 @@ def tool_odr_add_task(args: Dict[str, Any]) -> Dict[str, Any]:
     if task.get("tests") and (not isinstance(task["tests"], list)
                               or not task["tests"]):
         raise ValueError("'tests' must be a non-empty list of {call, expected}")
-    task.setdefault("tests", [])
+    # Normalise the test-less shape: the key exists with None whenever the
+    # caller passed no tests, so setdefault() would not fire and tasks.json
+    # would carry "tests": null.
+    if not task.get("tests"):
+        task["tests"] = []
 
     path = _tasks_path(args)
     existing: List[Dict[str, Any]] = []

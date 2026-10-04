@@ -1,8 +1,13 @@
 """Tools the agent can invoke online.
 
 Execution of candidate code happens in an isolated subprocess
-(``python -I`` with a scrubbed environment and a wall-clock timeout), so a
-misbehaving candidate cannot leak the API keys held by the runtime.
+(:func:`open_dream_rsi.sandbox.run_isolated`: ``python -I``, scrubbed
+environment, wall-clock timeout that kills the whole process group, and
+POSIX address-space / CPU / process-count limits), so a misbehaving
+candidate cannot leak the API keys held by the runtime or survive its own
+timeout. Task-solution code is NOT statically gated — for hostile task
+sources set ``ODR_SANDBOX_CMD`` (bubblewrap/nsjail) or containerise the
+loop; see the sandbox module docstring.
 """
 
 from __future__ import annotations
@@ -14,6 +19,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
+
+from open_dream_rsi.sandbox import run_isolated
 
 VERIFIER_TEMPLATE = """
 import json, sys, traceback
@@ -86,10 +93,9 @@ class CodeVerifier:
             fh.write(script)
             path = fh.name
         try:
-            proc = subprocess.run(
+            proc = run_isolated(
                 [sys.executable, "-I", path],
-                capture_output=True, text=True, timeout=self.timeout,
-                env={"PATH": "/usr/bin:/bin"},
+                timeout=self.timeout,
                 cwd=tempfile.gettempdir(),
             )
         except subprocess.TimeoutExpired:
@@ -116,12 +122,9 @@ class CodeVerifier:
             fh.write(script)
             path = fh.name
         try:
-            proc = subprocess.run(
+            proc = run_isolated(
                 [sys.executable, "-I", path],
-                capture_output=True,
-                text=True,
                 timeout=self.timeout,
-                env={"PATH": "/usr/bin:/bin"},  # scrubbed — no API keys inside the sandbox
                 cwd=tempfile.gettempdir(),
             )
         except subprocess.TimeoutExpired:

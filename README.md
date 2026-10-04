@@ -31,9 +31,11 @@ Beyond the parameter-level dreaming, the loop also closes section 3 of the
 paper ("dreaming with code"): each cycle, the LLM **rewrites the exploration
 policy itself** as a small Python program (`choose_action(frontier, step)`).
 Candidates are statically validated (AST gate), executed only in an isolated
-sandbox (`python -I`, scrubbed env, timeout) and scored by **off-policy replay**
+sandbox (`python -I`, scrubbed env, group-killing timeout, memory/CPU/thread
+limits) and scored by **off-policy replay**
 on the recorded discovery history — a candidate replaces the incumbent only
-when it demonstrably beats it. A crashing or cheating policy can never break
+when it demonstrably beats it (the incumbent is re-scored on the *current*
+tree, not trusted at its stored score). A crashing or cheating policy can never break
 the loop: expansion falls back to the greedy baseline.
 
 ---
@@ -184,8 +186,14 @@ What makes it self-improving between runs (persistent `--memory` dir):
 * **Event log** (`events.jsonl`) — append-only audit of every decision.
 
 Guards: `--budget` caps API calls per cycle (dreaming stays free), candidate
-code runs in an isolated subprocess (`python -I`, scrubbed env, timeout) so a
-misbehaving solution cannot reach your API keys. Live walkthrough with a mock
+code runs in an isolated subprocess (`python -I`, scrubbed env, timeout that
+kills the whole process group, address-space/CPU/thread limits) so a
+misbehaving solution cannot reach your API keys or outlive its timeout.
+The subprocess is defence in depth, **not a container**: it does not restrict
+filesystem or network access. For hostile task sources set `ODR_SANDBOX_CMD`
+to a [bubblewrap](https://github.com/containers/bubblewrap)/nsjail wrapper
+(e.g. `bwrap --unshare-all --die-with-parent --ro-bind / /`) or run the loop
+inside a container. Live walkthrough with a mock
 OpenAI server: `examples/live_loop_demo.py`.
 
 ---

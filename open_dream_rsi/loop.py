@@ -43,6 +43,7 @@ from open_dream_rsi.core.policygen import (
     frontier_entry,
     greedy_replay_score,
     outcome_map,
+    rollout_score,
 )
 from open_dream_rsi.core.judge import LLMJudge
 from open_dream_rsi.core.simulator import ReplaySimulator
@@ -647,12 +648,25 @@ class AutoRSIRuntime:
         if steps < 2:
             return  # too little recorded history to score a policy fairly
         incumbent_source = entry["code"] if entry else None
-        incumbent_score = (entry["score"] if entry
-                           else greedy_replay_score(tree))
         # Don't re-ask the LLM unless the replay world has grown by a full
         # cycle's worth of new evidence — dreaming stays free, calls do not.
         if entry and steps - int(entry.get("steps", 0)) < POLICY_REGROW_STEPS:
             return
+        # Re-evaluate the incumbent on the CURRENT tree instead of trusting
+        # its stored score: the replay world has grown since it was scored,
+        # and an old threshold would let a candidate promote while being
+        # genuinely worse than the incumbent on today's evidence
+        # (old_incumbent < candidate < current_incumbent). Found by external
+        # review, 2026-10.
+        if incumbent_source:
+            incumbent_score, _ = rollout_score(
+                self.policy_sandbox, incumbent_source, tree)
+            if incumbent_score == float("-inf"):
+                # incumbent no longer scores on this tree (stale/broken) —
+                # the greedy baseline is the honest floor
+                incumbent_score = greedy_replay_score(tree)
+        else:
+            incumbent_score = greedy_replay_score(tree)
         self._emit("policy_gen", task_id=task.task_id, category=task.category,
                    incumbent_score=round(incumbent_score, 4))
         calls = [self.api_calls_used]
