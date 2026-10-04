@@ -1,0 +1,50 @@
+--- a/agent/curator.py
++++ b/agent/curator.py
+@@ -28,6 +28,12 @@
+ logger = logging.getLogger(__name__)
+ 
+ DEFAULT_INTERVAL_HOURS, DEFAULT_MIN_IDLE_HOURS = 24 * 7, 2  # 7 days
++# Reactive cadence (config ``curator.due_minutes``; 0 = classic weekly): when
++# set, the interval gate switches to minutes and the idle gate clamps to this
++# window, so a pass can run right after an answer once no queries are active.
++# Measured (4914-call production audit): 90.7% of same-class error repeats
++# arrive within 60 min of the previous one -- a weekly gate cannot act on them.
++DEFAULT_DUE_MINUTES = 0
+ DEFAULT_STALE_AFTER_DAYS, DEFAULT_ARCHIVE_AFTER_DAYS = 14, 30
+ # The LLM consolidation fork is opt-in; the deterministic inactivity prune
+ # (apply_automatic_transitions) always runs when the curator is enabled.
+@@ -112,6 +118,11 @@
+ 
+ def get_min_idle_hours() -> float:
+     return _config_number("min_idle_hours", DEFAULT_MIN_IDLE_HOURS, float)
++
++
++def get_due_minutes() -> int:
++    """Reactive-cadence window in minutes (0 = disabled, classic weekly)."""
++    return _config_number("due_minutes", DEFAULT_DUE_MINUTES, int)
+ 
+ 
+ def get_stale_after_days() -> int:
+@@ -155,6 +166,9 @@
+         return False
+     if last.tzinfo is None:
+         last = last.replace(tzinfo=timezone.utc)
++    due = get_due_minutes()
++    if due > 0:
++        return (now - last) >= timedelta(minutes=due)
+     return (now - last) >= timedelta(hours=get_interval_hours())
+ 
+ 
+@@ -1151,7 +1165,11 @@
+     """Best-effort: run a curator pass if all gates pass. Returns the result dict if a pass was started, else None. Never raises."""
+     try:
+         # Idle gating: only enforce when the caller provided a measurement.
+-        if not should_run_now() or (idle_for_seconds is not None and idle_for_seconds < get_min_idle_hours() * 3600.0):
++        # In reactive cadence (due_minutes>0) the window itself is the idle
++        # bound: waiting min_idle_hours would defeat the purpose.
++        due = get_due_minutes()
++        idle_floor = (due * 60.0) if due > 0 else get_min_idle_hours() * 3600.0
++        if not should_run_now() or (idle_for_seconds is not None and idle_for_seconds < idle_floor):
+             return None
+         if not _claim_run():
+             return None

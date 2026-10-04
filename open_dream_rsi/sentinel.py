@@ -43,7 +43,9 @@ EXAMPLE_LEN = 140
 _ERR_RE = re.compile(
     r"(?i)\berror\b|traceback|exception|refused|denied|not found|no such|"
     r"failed|timed out|timeout|unauthorized|forbidden|permission|"
-    r"\b(4\d\d|5\d\d)\b|exit code|non-zero|could not|unable to|missing"
+    r"\b(4\d\d|5\d\d)\b|exit code|non-zero|could not|unable to|missing|"
+    # Polish corpus (the bench + production host are Polish): "blad"/"błąd"
+    r"\bb\u0142ad\b|\bblad\b"
 )
 _NUM_RE = re.compile(r"\d+")
 _HEX_RE = re.compile(r"0x[0-9a-fA-F]+")
@@ -79,9 +81,12 @@ def classify(tool: str, result: Any,
     except Exception:
         data = None
     if isinstance(data, dict):
-        if data.get("error") or data.get("error_message") or data.get("isError"):
+        if (data.get("error") or data.get("error_message")
+                or data.get("isError") or data.get("blad")
+                or data.get("bład")):
             text = str(data.get("error") or data.get("error_message")
-                       or data.get("stderr") or "tool error")[:2000]
+                       or data.get("stderr") or data.get("blad")
+                       or data.get("bład") or "tool error")[:2000]
             if not _ERR_RE.search(text or ""):
                 return normalize(f"{tool}|{text}") or f"{tool}|"
         elif str(data.get("exit_code", data.get("exitCode", "0"))) not in ("0", "None"):

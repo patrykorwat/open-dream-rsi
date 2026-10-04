@@ -58,6 +58,11 @@ def fig_race():
                 xytext=(420, 0.30), xy=(ep_med * 1.05, 0.33),
                 color=C["gray"], fontsize=8,
                 arrowprops=dict(arrowstyle="->", color=C["gray"], lw=0.8))
+    ax.axvline(60, color=C["data"], ls="--", lw=1.0, alpha=0.7)
+    ax.annotate("reactive tick (60 min):\n90.7% of repeats land before it",
+                xy=(62, 0.94), xytext=(14, 0.78),
+                color=C["data"], fontsize=8,
+                arrowprops=dict(arrowstyle="->", color=C["data"], lw=0.8))
     ax.axvline(7 * 24 * 60, color=C["amber"], ls="-.", lw=1.1)
     ax.annotate("weekly skill-curator\nwake-up (10080 min)",
                 xytext=(1300, 0.52), xy=(7 * 24 * 60 * 0.72, 0.55),

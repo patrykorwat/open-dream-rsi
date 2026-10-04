@@ -682,9 +682,11 @@ store (30 days; within-session gaps between consecutive failures of the
 same normalized error class, n=1972, log scale). Half of all failing
 tool calls repeat a class the same session already suffered. A curator
 that acts at episode end --- any curator, in any host --- cannot see a
-signal that fires a median of 4.3 minutes into the same session; the
-weekly skill-curator is three orders of magnitude slower still. The
-sentinel reacts inside the tool-execution layer, in the same turn.}
+signal that fires a median of 4.3 minutes into the same session; a weekly
+curator is roughly three orders of magnitude slower still. A minute-scale
+reactive tick --- the design we shipped into the host's own curator ---
+sees 90.7\% of repeats, but only the
+in-tool sentinel beats the fastest half of them.}
 \label{fig:race}
 \end{figure}
 

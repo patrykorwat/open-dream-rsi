@@ -1,0 +1,33 @@
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -4663,9 +4663,18 @@
+         logger.info("Misfire catch-up: fired %d overdue job(s)", caught_up)
+ 
+ 
+-def _housekeeping_curator() -> None:
+-    """maybe_run_curator() is gated by config.interval_hours (7 days default); this is the poll."""
+-    from agent.curator import maybe_run_curator
++def _housekeeping_curator(runner=None) -> None:
++    """maybe_run_curator() is gated by config.interval_hours (7 days default); this is the poll.
++    Reactive cadence (curator.due_minutes > 0): refuse to start while any agent is mid-turn, so a
++    pass lands after the answer, never between the answer and the follow-up. The cadence gate
++    itself (interval + due-window idle floor) lives in agent.curator.maybe_run_curator."""
++    from agent.curator import get_due_minutes, maybe_run_curator
++    if get_due_minutes() > 0 and runner is not None:
++        try:
++            if runner._running_agent_count():
++                return
++        except Exception:
++            pass
+     maybe_run_curator(idle_for_seconds=float("inf"), on_summary=lambda msg: logger.info("curator: %s", msg))
+ 
+ 
+@@ -4827,7 +4836,7 @@
+     chores += [
+         # Per served profile: each profile has its own skills tree, curator state, Nous login
+         # and state.db.
+-        (60, "Curator tick", profile_scoped_chore(runner, _housekeeping_curator)),
++        (60, "Curator tick", profile_scoped_chore(runner, lambda: _housekeeping_curator(runner))),
+         (60, "Sync pull tick", profile_scoped_chore(runner, _housekeeping_skill_sync)),
+         (60, "Org sync pull tick", profile_scoped_chore(runner, _housekeeping_org_skill_sync)),
+         (60, "state.db maintenance tick", profile_scoped_chore(
