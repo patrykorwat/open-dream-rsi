@@ -608,9 +608,71 @@ in the prompting, not in the notes.}
 \label{fig:goose}
 \end{figure}
 
+\subsection{Public-benchmark performance: goose $\times$ TravelPlanner}
+\label{sec:tp}
+
+To measure the sentinel's \emph{net effect on task outcomes} --- not just its
+zero-tax property --- we put the agent on a public, externally-scored
+benchmark: the official \texttt{osunlp/TravelPlanner} validation subset
+(101 consecutive tasks, all \emph{easy} and \emph{medium} difficulty), served
+offline through our stdlib MCP sandbox (6 tools, deterministic database),
+scored by the benchmark's own commonsense and hard-constraint evaluators
+(nothing in the scoring path is ours). Goose, \texttt{max-turns}~45, same
+model and endpoint as every other study in this paper. Arms: cold, and the
+v1 sentinel (reactive recurrence notes, pull tool, Stop-hook delivery ---
+the shipped configuration at run time).
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrrrr}
+\toprule
+arm & delivered & cs.\ pass & hard pass & final pass & mean calls \\
+\midrule
+cold          & 34/101 (34\%) & 12 & 8  & 7.9\% & 24.3 (delivered) \\
+v1 sentinel   & 28/101 (28\%) & 16 & 10 & 9.9\% & 22.6 (delivered) \\
+\bottomrule
+\end{tabular}
+\caption{goose $\times$ TravelPlanner, 101-task validation subset, official
+final scoring. McNemar on delivery: $p{=}0.43$ (no paired effect). The
+v1 sentinel \emph{delivers less often} but its delivered plans pass
+hard constraints more often (10 vs.\ 8 at six fewer deliveries) --- see the
+termination analysis below; neither difference is statistically settled at
+this $n$.}
+\label{tab:tp}
+\end{table}
+
+The headline is what the failures look like. \textbf{128 of 139 undelivered
+episodes (92\%) end pinned at the harness call cap} --- goose's
+``maximum number of actions'' cut-off --- with the sandbox data already in
+hand; delivered episodes average 23 calls. The failure mode is
+\emph{termination}, not verification: the agent does not stop exploring to
+answer. The recurrence-note channel cannot address this: 73\% of cut-off
+episodes ended on a \emph{clean} (non-error) call, so a failure-only
+trigger reaches barely a quarter of the dying episodes, and its Stop-hook
+delivery burns the turn it is trying to save. This measurement --- not a
+hunch --- motivated the second reactive channel shipped in
+\texttt{sentinel.py}: a budget-driven \emph{finalize nudge} that counts
+all tool calls, fires at most once per session at ${\sim}80\%$ of the
+episode budget, and rides an ordinary tool result (Figure~\ref{fig:tp}).
+The paired v2 run of that arm is future work; we report the v1 arms as
+measured, and the negative McNemar honestly.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{fig_tp.png}
+\caption{goose $\times$ TravelPlanner (101-task validation subset, official
+evaluators). Left: plan delivery with final pass rates; the v1 sentinel's
+plans pass hard constraints more often despite delivering less often.
+Right: tool-call histogram --- the distribution is bimodal: episodes that
+answer stop near 23 calls, episodes that die pile up at the 45-call harness
+cap. Under budget pressure the binding failure is knowing when to stop,
+which no error-recurrence mechanism can see.}
+\label{fig:tp}
+\end{figure}
+
 \subsection{Test suite}
 
-216 tests pass (2{,}639 non-blank LOC), including the benchmark's behavioural
+230 tests pass (2{,}682 non-blank LOC), including the benchmark's behavioural
 contracts:
 trap-family scores equal their constructed values; the greedy arm must solve
 nothing; the gated-policy arm must dominate $\varepsilon$; the replay rollout

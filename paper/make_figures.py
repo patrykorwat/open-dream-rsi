@@ -249,9 +249,66 @@ def fig_loop():
     plt.close(fig)
 
 
+def fig_tp():
+    """Public-benchmark performance: goose x TravelPlanner (v1 arms).
+
+    Left: delivery + official final pass on the validation subset.
+    Right: the failure anatomy — delivered episodes stop at ~23 calls,
+    undelivered ones pile up at the harness cap (45): termination, not
+    verification, is the dominant failure mode under budget pressure."""
+    d = json.loads((HERE.parent / "fixtures" / "tp_v1_summary.json")
+                   .read_text(encoding="utf-8"))
+    eps, sc = d["episodes"], d["scores"]
+    arms = ["cold", "osi_full"]
+    colors = {"cold": "0.35", "osi_full": C["data"]}
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6.8, 2.9),
+                                   gridspec_kw={"width_ratios": [1, 1.25]})
+
+    # left: grouped bars, delivery (bars) annotated with final pass (dots)
+    n = sum(1 for e in eps if e["arm"] == "cold")
+    for i, a in enumerate(arms):
+        dlv = sum(1 for e in eps if e["arm"] == a and e["delivered"])
+        ax1.bar(i, 100.0 * dlv / n, 0.55, color=colors[a])
+        ax1.annotate(f"{dlv}/{n}\n{100*dlv/n:.0f}% plan",
+                     (i, 100.0 * dlv / n + 2), ha="center", fontsize=7.5)
+        fp = sc[a]["final_pass_rate"] * 100
+        ax1.plot([i], [fp], marker="D", ms=6, color=C["ok"], zorder=4)
+        ax1.annotate(f"final pass {fp:.1f}%", (i + 0.30, fp), ha="left",
+                     va="center", fontsize=7.5, color=C["ok"])
+    ax1.set_xticks(range(2))
+    ax1.set_xticklabels(["cold", "v1 sentinel\n(recurrence notes)"], fontsize=8)
+    ax1.set_ylabel("delivered plans, % of 101 tasks")
+    ax1.set_ylim(0, 45)
+    ax1.set_title("TravelPlanner validation subset\n(official commonsense+hard scoring)",
+                  fontsize=9)
+    ax1.text(0.02, 0.06, "green ◇ = final pass rate\n(passing all hard constraints)",
+             transform=ax1.transAxes, fontsize=7, color=C["ok"])
+
+    # right: tool-call histogram per arm — bimodal: answer at ~23, die at 45
+    bins = list(range(0, 56, 3))
+    for a in arms:
+        calls = [e["tool_calls"] for e in eps if e["arm"] == a]
+        ax2.hist(calls, bins=bins, color=colors[a], alpha=0.75, label=a)
+    ax2.axvline(45, color=C["warn"], ls="--", lw=1.1)
+    ax2.annotate("harness cut-off:\n128/139 undelivered episodes\nstop here with data in hand",
+                 xytext=(30.5, 15.5), xy=(45, 12), fontsize=7.5, color=C["warn"],
+                 arrowprops=dict(arrowstyle="->", color=C["warn"], lw=0.8))
+    ax2.text(2, 15.5, "answered episodes\nmean ~23 calls", fontsize=7.5,
+             color=C["gray"])
+    ax2.set_xlabel("tool calls per episode")
+    ax2.set_ylabel("episodes")
+    ax2.set_title("failure anatomy: exploration never stops", fontsize=9)
+    ax2.legend(frameon=False, fontsize=7.5, loc="upper left")
+    no_overlap(fig)
+    fig.tight_layout()
+    fig.savefig(HERE / "fig_tp.png")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     fig_race()
     fig_arms()
     fig_goose()
     fig_loop()
-    print("wrote fig_race.png, fig_arms.png")
+    fig_tp()
+    print("wrote fig_race.png, fig_arms.png, fig_goose.png, fig_loop.png, fig_tp.png")

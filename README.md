@@ -7,7 +7,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-211%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-230%20passing-brightgreen)](tests/)
 
 An open, dependency-free implementation of **Dream-RSI** (*Recursive
 Self-Improvement through Evolving Worlds*, Zheng et al., Google / Google
@@ -178,6 +178,33 @@ python -m open_dream_rsi bench --cycles 10 --markdown
 **54% fewer API calls at equal solve quality** — competitive discovery
 quality at a reduced online budget, at library scale.
 
+### Real-agent benchmark — goose × TravelPlanner (public, externally scored)
+
+Everything above is scripted-machinery measurement. This one is a real
+agent on a public benchmark scored by *its own* evaluators: goose (v1.53)
+planning real itineraries against the official TravelPlanner offline
+database over a stdlib MCP sandbox, on the validation subset (101
+consecutive easy+medium tasks), model `Qwen3.8-Flash-Next` served by vLLM —
+a state-of-the-art-class local model. Same endpoint and model across every
+study in this repo and the paper.
+
+| arm | delivered plans | commonsense pass | hard pass | final pass |
+|---|---|---|---|---|
+| cold | 34/101 (34%) | 12 | 8 | 7.9% |
+| sentinel v1 (recurrence notes) | 28/101 (28%) | 16 | 10 | 9.9% |
+
+![goose × TravelPlanner: delivery + failure anatomy](docs/figures/fig_tp.png)
+
+The finding worth more than the arm delta (McNemar p=0.43 — honestly, no
+paired effect yet): **92% of undelivered episodes die pinned at the
+harness call cap with the data already in hand**, while delivered episodes
+average 23 of 45 calls. The binding failure mode of an agent under budget
+pressure is *termination*, not error recovery — 73% of cut-off episodes
+ended on a clean (non-error) call, which no failure-triggered mechanism
+can reach. That measurement drove the second sentinel channel (finalize
+nudge, below). Raw per-episode data: `fixtures/tp_v1_summary.json`;
+paper §6.4.
+
 ### Exploration quality — `bench-policy` (decoy traps)
 
 Solve-rate graphs saturate on easy suites and cannot tell good exploration
@@ -211,6 +238,8 @@ python -m open_dream_rsi bench-policy --cycles 8 --format md
   **from cycle 1**; the ledger-only ablation (same text in prompts, pick
   disabled) collapses back to the baselines — the win is the expansion
   rule, not prompt length.
+
+![Decoy-trap suite: per-cycle solve rate, five arms](docs/screenshots/odr_policy_bench.png)
 
 ### Would a lesson set have been promoted? `gate-replay`
 
@@ -276,6 +305,18 @@ failing results. Adapters: Hermes plugin (`plugins/hermes_sentinel/`),
 Claude Code hooks (`plugins/claude_code/`), goose Stop-hook
 (`plugins/goose/`), and plain stdin-JSON CLI for any command-hook host
 (`python -m open_dream_rsi sentinel check`).
+
+**Second reactive channel — the finalize nudge.** The TravelPlanner study
+above showed the dominant failure mode under budget pressure is
+termination, not error recovery, and that a Stop-hook delivery burns the
+turn it tries to save. The nudge therefore counts *all* tool calls (clean
+and failing), fires **at most once per session** at ~80% of the episode's
+tool-call budget, and rides an ordinary tool result — never a blocking
+hook. Same declarative framing as the recurrence note, with the stop
+clause aimed at answering, not at more exploring. `max_notes_per_session`
+is an opt-in cap (default 0 = unlimited; episode harnesses pass 8) —
+the production replay fixture shows one legitimate session emitting 24
+notes, so the engine must not cap by default.
 
 ---
 
@@ -374,10 +415,12 @@ dreamed-policy gauges per category and the learned recipe library.
 python -m unittest discover -s tests          # or: pytest tests/ -q
 ```
 
-211 tests, stdlib-only: benchmark behavioural contracts (greedy must solve
+230 tests, stdlib-only: benchmark behavioural contracts (greedy must solve
 nothing; the gated arm must dominate ε; the rollout must be prefix-only),
 sandbox escape regressions, gate semantics, MCP protocol, goose config
-dialects.
+dialects, sentinel channel semantics (nudge fires once per budget,
+merges with recurrence notes, clean calls count toward the budget; the
+30-day production replay must reproduce its recorded note count exactly).
 
 ## License
 
