@@ -225,3 +225,57 @@ def test_cli_ledger_and_reset(tmp_path):
     assert "tracked" in led.stdout and led.returncode == 0
     rst = _run("sentinel", "reset", "--state", state)
     assert "cleared" in rst.stdout
+
+
+# -- finalize nudge (budget pressure channel) ---------------------------------------
+
+def test_finalize_nudge_fires_once_at_budget(tmp_path):
+    e = engine(tmp_path, finalize_budget=10, finalize_at=0.8)
+    outs = [e.observe("t", '{"output": "fine", "exit_code": 0}', "S1")
+            for _ in range(12)]
+    fired = [o for o in outs if o and "Budget fact" in o]
+    assert len(fired) == 1                      # dedupe: once per session
+    assert "8 of 10" in fired[0]                # ceil(0.8*10)
+    assert "facts, not instructions" in fired[0]
+
+
+def test_finalize_nudge_disabled_by_default(tmp_path):
+    e = engine(tmp_path)
+    for _ in range(50):
+        assert e.observe("t", '{"output": "fine", "exit_code": 0}', "S1") is None
+
+
+def test_finalize_nudge_counts_clean_calls(tmp_path):
+    # 73% of cut-off episodes in the goose study ended on a CLEAN call:
+    # clean results must count toward the budget even when they stay silent.
+    e = engine(tmp_path, finalize_budget=5, finalize_at=0.6)  # trigger: call 3
+    assert e.observe("t", '{"ok": 1}', "S1", status="ok") is None
+    assert e.observe("t", '{"ok": 2}', "S1", status="ok") is None
+    out = e.observe("t", '{"ok": 3}', "S1", status="ok")
+    assert out and "Budget fact" in out
+
+
+def test_finalize_nudge_merges_with_recurrence_note(tmp_path):
+    # trigger lands exactly on the call that crosses the repeat threshold:
+    # both channels must ride the same result, nudge first.
+    e = engine(tmp_path, finalize_budget=4, finalize_at=0.5)  # trigger: call 2
+    e.observe("t", '{"error": "boom"}', "S1")
+    out = e.observe("t", '{"error": "boom"}', "S1")
+    assert out and "Budget fact" in out and "[Sentinel] Same error class" in out
+    assert out.index("Budget fact") < out.index("Same error class")
+
+
+def test_note_cap_is_per_session_and_opt_in(tmp_path):
+    # The cap bounds ONE session's note volume (doom-loop defence at
+    # episode scale). Production default 0 = unlimited: the 30-day replay
+    # fixture shows a legit host session emitting 24 notes.
+    def burst(e):
+        fired = 0
+        for i in range(12):                      # 12 distinct classes, one session
+            cls = "cls " + chr(ord("a") + i)     # letters: survive normalize()
+            for _ in range(2):                   # each class crosses intra=2 once
+                out = e.observe("t", f'{{"error": "{cls}"}}', "S1")
+                fired += 1 if out else 0
+        return fired
+    assert burst(engine(tmp_path, max_notes_per_session=8)) == 8
+    assert burst(engine(tmp_path / "u", max_notes_per_session=0)) == 12
