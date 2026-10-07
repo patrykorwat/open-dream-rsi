@@ -183,27 +183,41 @@ quality at a reduced online budget, at library scale.
 Everything above is scripted-machinery measurement. This one is a real
 agent on a public benchmark scored by *its own* evaluators: goose (v1.53)
 planning real itineraries against the official TravelPlanner offline
-database over a stdlib MCP sandbox, on the validation subset (101
-consecutive easy+medium tasks), model `Qwen3.8-Flash-Next` served by vLLM —
-a state-of-the-art-class local model. Same endpoint and model across every
-study in this repo and the paper.
+database over a stdlib MCP sandbox, on the model
+`Qwen3.8-Flash-Next` served by vLLM — a state-of-the-art-class local model.
+Same endpoint and model across every study in this repo and the paper.
 
-| arm | delivered plans | commonsense pass | hard pass | final pass |
-|---|---|---|---|---|
-| cold | 34/101 (34%) | 12 | 8 | 7.9% |
-| sentinel v1 (recurrence notes) | 28/101 (28%) | 16 | 10 | 9.9% |
+Frozen protocol: iterations only on `train.csv` (45 tasks); one preregistered
+eval pass on official validation rows 102–181 (79 tasks, 60 hard),
+configuration unchanged from the dev split; official test split never
+touched. Arms interleaved task-by-task per pass (paired, McNemar-ready).
+The gate arm is *choice removal*, not persuasion: past 36 of 45 tool calls
+the sandbox refuses to serve (all text channels off).
+
+| split | arm | delivered plans | commonsense pass | hard pass | final pass |
+|---|---|---|---|---|---|
+| train (45) | cold | 15/45 (33%) | 4 | 3 | 6.7% |
+| train (45) | gate | 41/45 (91%) | 18 | 9 | 20.0% |
+| **eval (79)** | cold | 18/79 (23%) | 12 | 6 | 7.6% |
+| **eval (79)** | gate | **74/79 (94%)** | 40 | 17 | **21.5%** |
+
+McNemar on paired delivery: eval 56↔0 discordant, p=1.4e-17 (train 28↔2,
+p=4.3e-7).
 
 ![goose × TravelPlanner: delivery + failure anatomy](docs/figures/fig_tp.png)
 
-The finding worth more than the arm delta (McNemar p=0.43 — honestly, no
-paired effect yet): **92% of undelivered episodes die pinned at the
-harness call cap with the data already in hand**, while delivered episodes
-average 23 of 45 calls. The binding failure mode of an agent under budget
-pressure is *termination*, not error recovery — 73% of cut-off episodes
-ended on a clean (non-error) call, which no failure-triggered mechanism
-can reach. That measurement drove the second sentinel channel (finalize
-nudge, below). Raw per-episode data: `fixtures/tp_v1_summary.json`;
-paper §6.4.
+Why it works: **every single undelivered cold episode (91/91 across both
+splits) died pinned at the harness call cap with the sandbox data already
+in hand** — the binding failure under budget pressure is *termination*, not
+error recovery, and three text-in-context channels measured earlier
+(pull tool, Stop-hook note, budget nudge) converted zero of those episodes.
+Removing the option to keep exploring is the only lever that moved delivery.
+Honest caveats: the *choice* of gate over persuasion was made knowing
+results on the earlier 101-task validation pool (selection era, archived —
+the eval pass is a preregistered confirmation, not a first exposure); the
+gate's 5 residual eval failures are episodes that called through the
+refusals to the cap anyway. Raw per-episode data:
+`fixtures/tp_v3_summary.json`; paper §6.4.
 
 ### Exploration quality — `bench-policy` (decoy traps)
 
@@ -318,6 +332,17 @@ is an opt-in cap (default 0 = unlimited; episode harnesses pass 8) —
 the production replay fixture shows one legitimate session emitting 24
 notes, so the engine must not cap by default.
 
+**Third mechanism — the permute-gate (the one that won).** The nudge was
+later measured to convert **0 of 25** cap-dying episodes it triggered on
+(selection-era runs): this model family does not stop because text asks it
+to. What moved the numbers (table above) is
+*choice removal*: past 80% of the call budget the sandbox itself refuses to
+serve — every further call returns `isError` and all persuasion channels
+stay silent, so answering with data in hand becomes the only option. Shipped
+as `SENTINEL_GATE_BUDGET`/`SENTINEL_GATE_AT` on the MCP server
+(`open_dream_rsi/mcp_server.py` semantics), independent of the note/nudge
+channels.
+
 ---
 
 ## Security model
@@ -415,12 +440,14 @@ dreamed-policy gauges per category and the learned recipe library.
 python -m unittest discover -s tests          # or: pytest tests/ -q
 ```
 
-230 tests, stdlib-only: benchmark behavioural contracts (greedy must solve
+226 tests (+10 subtests), stdlib-only: benchmark behavioural contracts (greedy must solve
 nothing; the gated arm must dominate ε; the rollout must be prefix-only),
 sandbox escape regressions, gate semantics, MCP protocol, goose config
 dialects, sentinel channel semantics (nudge fires once per budget,
 merges with recurrence notes, clean calls count toward the budget; the
-30-day production replay must reproduce its recorded note count exactly).
+permute-gate serves until ceil(0.8·budget) then refuses forever, per
+session; the 30-day production replay must reproduce its recorded note
+count exactly).
 
 ## License
 

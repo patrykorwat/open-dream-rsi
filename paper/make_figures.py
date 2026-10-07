@@ -250,55 +250,71 @@ def fig_loop():
 
 
 def fig_tp():
-    """Public-benchmark performance: goose x TravelPlanner (v1 arms).
+    """Public-benchmark performance: goose x TravelPlanner (frozen protocol).
 
-    Left: delivery + official final pass on the validation subset.
-    Right: the failure anatomy — delivered episodes stop at ~23 calls,
-    undelivered ones pile up at the harness cap (45): termination, not
-    verification, is the dominant failure mode under budget pressure."""
-    d = json.loads((HERE.parent / "fixtures" / "tp_v1_summary.json")
+    Left: plan delivery per split (train dev / preregistered holdout eval),
+    arms cold vs the permute-gate; green diamond = official final pass rate.
+    Right: the failure anatomy on the holdout — cold episodes pile up at the
+    45-call harness cap, the gate converts that pile into answers that stop
+    at/just past the 36-call gate."""
+    d = json.loads((HERE.parent / "fixtures" / "tp_v3_summary.json")
                    .read_text(encoding="utf-8"))
-    eps, sc = d["episodes"], d["scores"]
-    arms = ["cold", "osi_full"]
-    colors = {"cold": "0.35", "osi_full": C["data"]}
+    arms = ["cold", "osi_gate"]
+    labels = {"cold": "cold", "osi_gate": "permute-gate\n(refuses past 36/45)"}
+    colors = {"cold": "0.35", "osi_gate": C["data"]}
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6.8, 2.9),
-                                   gridspec_kw={"width_ratios": [1, 1.25]})
+                                   gridspec_kw={"width_ratios": [1.15, 1.1]})
 
-    # left: grouped bars, delivery (bars) annotated with final pass (dots)
-    n = sum(1 for e in eps if e["arm"] == "cold")
-    for i, a in enumerate(arms):
-        dlv = sum(1 for e in eps if e["arm"] == a and e["delivered"])
-        ax1.bar(i, 100.0 * dlv / n, 0.55, color=colors[a])
-        ax1.annotate(f"{dlv}/{n}\n{100*dlv/n:.0f}% plan",
-                     (i, 100.0 * dlv / n + 2), ha="center", fontsize=7.5)
-        fp = sc[a]["final_pass_rate"] * 100
-        ax1.plot([i], [fp], marker="D", ms=6, color=C["ok"], zorder=4)
-        ax1.annotate(f"final pass {fp:.1f}%", (i + 0.30, fp), ha="left",
-                     va="center", fontsize=7.5, color=C["ok"])
-    ax1.set_xticks(range(2))
-    ax1.set_xticklabels(["cold", "v1 sentinel\n(recurrence notes)"], fontsize=8)
-    ax1.set_ylabel("delivered plans, % of 101 tasks")
-    ax1.set_ylim(0, 45)
-    ax1.set_title("TravelPlanner validation subset\n(official commonsense+hard scoring)",
+    # left: delivery bars per split per arm + final-pass diamonds
+    splits = ["train", "holdout"]
+    ns = {s: sum(1 for e in d["splits"][s] if e["arm"] == "cold")
+          for s in splits}
+    width, xs, xt = 0.34, [], []
+    for si, s in enumerate(splits):
+        for ai, a in enumerate(arms):
+            x = si * 1.3 + (ai - 0.5) * width
+            eps = [e for e in d["splits"][s] if e["arm"] == a]
+            dlv = sum(1 for e in eps if e["delivered"])
+            pct = 100.0 * dlv / ns[s]
+            ax1.bar(x, pct, width, color=colors[a])
+            ax1.annotate(f"{dlv}/{ns[s]}", (x, pct + 1.5), ha="center",
+                         fontsize=7)
+            fp = d["scores"][s][a]["final_pass_rate"] * 100
+            ax1.plot([x], [fp], marker="D", ms=5.5, color=C["ok"], zorder=4)
+            xs.append(x)
+        xt.append(f"{s}\n(n={ns[s]})")
+    ax1.set_xticks([si * 1.3 for si in range(len(splits))])
+    ax1.set_xticklabels(xt, fontsize=8)
+    ax1.set_ylabel("delivered plans, % of tasks", fontsize=8.5)
+    ax1.set_ylim(0, 100)
+    ax1.set_title("TravelPlanner, official commonsense+hard scoring\ngrey=cold, blue=gate; ◇ final pass",
                   fontsize=9)
-    ax1.text(0.02, 0.06, "green ◇ = final pass rate\n(passing all hard constraints)",
-             transform=ax1.transAxes, fontsize=7, color=C["ok"])
+    ax1.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=colors[a])
+                        for a in arms],
+               labels=arms, frameon=False, fontsize=7.5, loc="upper left")
 
-    # right: tool-call histogram per arm — bimodal: answer at ~23, die at 45
+    # right: holdout tool-call histogram — cold at cap vs gate stopping at gate
     bins = list(range(0, 56, 3))
     for a in arms:
-        calls = [e["tool_calls"] for e in eps if e["arm"] == a]
-        ax2.hist(calls, bins=bins, color=colors[a], alpha=0.75, label=a)
+        calls = [e["tool_calls"] for e in d["splits"]["holdout"]
+                 if e["arm"] == a]
+        ax2.hist(calls, bins=bins, color=colors[a], alpha=0.75,
+                 label=labels[a])
     ax2.axvline(45, color=C["warn"], ls="--", lw=1.1)
-    ax2.annotate("harness cut-off:\n128/139 undelivered episodes\nstop here with data in hand",
-                 xytext=(30.5, 15.5), xy=(45, 12), fontsize=7.5, color=C["warn"],
+    ax2.axvline(36, color=C["data"], ls=":", lw=1.1)
+    ncap = sum(1 for e in d["splits"]["holdout"]
+               if e["arm"] == "cold" and not e["delivered"]
+               and e["tool_calls"] >= 45)
+    ax2.annotate(f"{ncap}/79 cold episodes die here\n(harness cap, data in hand)",
+                 xytext=(19, 24), xy=(45, 20), fontsize=7.5, color=C["warn"],
                  arrowprops=dict(arrowstyle="->", color=C["warn"], lw=0.8))
-    ax2.text(2, 15.5, "answered episodes\nmean ~23 calls", fontsize=7.5,
-             color=C["gray"])
-    ax2.set_xlabel("tool calls per episode")
-    ax2.set_ylabel("episodes")
-    ax2.set_title("failure anatomy: exploration never stops", fontsize=9)
-    ax2.legend(frameon=False, fontsize=7.5, loc="upper left")
+    ax2.text(2, 30, "gate (36): answers land\nat/just past the trigger",
+             fontsize=7.5, color=C["data"])
+    ax2.set_xlabel("tool calls per episode (holdout)", fontsize=8.5)
+    ax2.set_ylabel("episodes", fontsize=8.5)
+    ax2.set_title("termination, not verification, is the failure",
+                  fontsize=9)
+    ax2.legend(frameon=False, fontsize=7, loc="upper left")
     no_overlap(fig)
     fig.tight_layout()
     fig.savefig(HERE / "fig_tp.png")

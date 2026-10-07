@@ -613,66 +613,83 @@ in the prompting, not in the notes.}
 
 To measure the sentinel's \emph{net effect on task outcomes} --- not just its
 zero-tax property --- we put the agent on a public, externally-scored
-benchmark: the official \texttt{osunlp/TravelPlanner} validation subset
-(101 consecutive tasks, all \emph{easy} and \emph{medium} difficulty), served
-offline through our stdlib MCP sandbox (6 tools, deterministic database),
-scored by the benchmark's own commonsense and hard-constraint evaluators
-(nothing in the scoring path is ours). Goose, \texttt{max-turns}~45, same
-model and endpoint as every other study in this paper. Arms: cold, and the
-v1 sentinel (reactive recurrence notes, pull tool, Stop-hook delivery ---
-the shipped configuration at run time).
+benchmark: \texttt{osunlp/TravelPlanner}, served offline through our stdlib
+MCP sandbox (6 tools, deterministic database), scored by the benchmark's own
+commonsense and hard-constraint evaluators (nothing in the scoring path is
+ours). Goose, \texttt{max-turns}~45, same model and endpoint as every other
+study in this paper.
+
+\hdr{Protocol (frozen before the eval pass).} Only TravelPlanner data is
+used. \texttt{train.csv} (45 tasks) is the dev split; the eval split is the
+official validation rows 102--181 (79 tasks, 60 of them \emph{hard}) ---
+never touched before the configuration was frozen; the official test split
+was never touched. Arms are interleaved task-by-task within a single pass
+per split (paired episodes, zero endpoint drift between arms). Two honesty
+notes. First, the \emph{choice} of mechanism (choice-removal gate over
+persuasion channels) was made knowing results on the earlier 101 validation
+tasks --- the arm-selection era, archived separately; the eval pass below is
+a preregistered confirmation, not an unblemished first exposure. Second,
+the gate threshold (36 of 45 calls) was fixed a priori at 80\% of the cap,
+not swept.
 
 \begin{table}[h]
 \centering\small
-\begin{tabular}{lrrrrr}
+\begin{tabular}{llrrrr}
 \toprule
-arm & delivered & cs.\ pass & hard pass & final pass & mean calls \\
+split & arm & delivered & cs.\\ pass & hard pass & final pass \\
 \midrule
-cold          & 34/101 (34\%) & 12 & 8  & 7.9\% & 24.3 (delivered) \\
-v1 sentinel   & 28/101 (28\%) & 16 & 10 & 9.9\% & 22.6 (delivered) \\
+train (45)   & cold  & 15/45 (33\%) & 4  & 3 & 6.7\% \\
+train (45)   & gate  & 41/45 (91\%) & 18 & 9 & 20.0\% \\
+\midrule
+eval (79)    & cold  & 18/79 (23\%) & 12 & 6  & 7.6\% \\
+eval (79)    & gate  & 74/79 (94\%) & 40 & 17 & 21.5\% \\
 \bottomrule
 \end{tabular}
-\caption{goose $\times$ TravelPlanner, 101-task validation subset, official
-final scoring. McNemar on delivery: $p{=}0.43$ (no paired effect). The
-v1 sentinel \emph{delivers less often} but its delivered plans pass
-hard constraints more often (10 vs.\ 8 at six fewer deliveries) --- see the
-termination analysis below; neither difference is statistically settled at
-this $n$.}
+\caption{goose $\times$ TravelPlanner, official final scoring, frozen
+configuration. McNemar on paired delivery --- eval split: 56 discordant
+pairs, all 56 favouring the gate ($p{=}1.4{\times}10^{-17}$); train split:
+28 vs.\ 2 ($p{=}4.3{\times}10^{-7}$). Delivery is the mechanical effect of
+the gate; final pass rate $\times$ delivery is what a user receives: 7.6\%
+$\to$ 21.5\%, a 2.8$\times$ improvement on the eval split.}
 \label{tab:tp}
 \end{table}
 
-The headline is what the failures look like. \textbf{128 of 139 undelivered
-episodes (92\%) end pinned at the harness call cap} --- goose's
-``maximum number of actions'' cut-off --- with the sandbox data already in
-hand; delivered episodes average 23 calls. The failure mode is
-\emph{termination}, not verification: the agent does not stop exploring to
-answer. The recurrence-note channel cannot address this: 73\% of cut-off
-episodes ended on a \emph{clean} (non-error) call, so a failure-only
-trigger reaches barely a quarter of the dying episodes, and its Stop-hook
-delivery burns the turn it is trying to save. This measurement --- not a
-hunch --- motivated the second reactive channel shipped in
-\texttt{sentinel.py}: a budget-driven \emph{finalize nudge} that counts
-all tool calls, fires at most once per session at ${\sim}80\%$ of the
-episode budget, and rides an ordinary tool result (Figure~\ref{fig:tp}).
-The paired v2 run of that arm is future work; we report the v1 arms as
-measured, and the negative McNemar honestly.
+The failure anatomy explains why. \textbf{All 61 undelivered cold episodes
+on the eval split end pinned at the harness call cap} with the sandbox data
+already in hand (delivered cold episodes average 29.5 calls); across both
+splits, cold fails to deliver on 91 of 124 episodes --- and all 91 die at
+the cap, not elsewhere. The binding
+failure mode under budget pressure is \emph{termination}, not verification.
+Three text channels were measured first and all converted zero cap-dying
+episodes (pull tool, Stop-hook note, finalize nudge; arm-selection-era
+runs, archived):
+this model family does not stop because a note asks it to. The arm that
+works is \emph{choice removal}: past 36 calls the sandbox simply refuses to
+serve ($\mathit{isError}$ on every further call, all persuasion silenced) ---
+the only option left is to answer with what is already in hand. It converts
+the cap-pile into answers: eval delivery 23\% $\to$ 94\%, with the gate-arm
+answer distribution landing at/just past the trigger (Figure~\ref{fig:tp}).
+The gate's five remaining eval failures are the same pathology at lower
+frequency: the model keeps calling \emph{through} the refusals (each refusal
+is still a turn) until the 45-call harness cut-off --- 5/79 tasks (6\%),
+4 of them hard. Choice removal is necessary but not universally
+sufficient; the residual is reported, not smoothed.
 
 \begin{figure}[h]
 \centering
 \includegraphics[width=\linewidth]{fig_tp.png}
-\caption{goose $\times$ TravelPlanner (101-task validation subset, official
-evaluators). Left: plan delivery with final pass rates; the v1 sentinel's
-plans pass hard constraints more often despite delivering less often.
-Right: tool-call histogram --- the distribution is bimodal: episodes that
-answer stop near 23 calls, episodes that die pile up at the 45-call harness
-cap. Under budget pressure the binding failure is knowing when to stop,
-which no error-recurrence mechanism can see.}
+\caption{goose $\times$ TravelPlanner (official evaluators). Left: plan
+delivery per split --- dev (train) and the preregistered eval pass; green
+diamonds mark the official final pass rate. Right: holdout tool-call
+histogram --- cold episodes pile up at the 45-call harness cut-off, the gate
+arm's answers land at/just past the 36-call refusal point. Raw per-episode
+data: \texttt{fixtures/tp\_v3\_summary.json}.}
 \label{fig:tp}
 \end{figure}
 
 \subsection{Test suite}
 
-230 tests pass (2{,}682 non-blank LOC), including the benchmark's behavioural
+226 tests + 10 subtests pass (5{,}757 non-blank LOC in the shipped library), including the benchmark's behavioural
 contracts:
 trap-family scores equal their constructed values; the greedy arm must solve
 nothing; the gated-policy arm must dominate $\varepsilon$; the replay rollout

@@ -73,12 +73,43 @@ def result_is_error(text: str) -> bool:
         return False
 
 
+REFUSAL = {"blad": "budget_exhausted: tool-call budget spent; answer now "
+                   "with the data you already have (further calls will be "
+                   "refused)"}
+
+
+class PermuteGate:
+    """Choice removal, not persuasion: after ``trigger`` sandbox attempts
+    the server REFUSES to serve (every further call is ``isError``).
+
+    Measured on goose x TravelPlanner (paper sec. tp): three text channels
+    (pull tool, Stop-hook note, finalize nudge) converted 0 cap-dying
+    episodes; removing the option to keep exploring moved paired delivery
+    from 23% to 94% on the preregistered eval split. Off by default
+    (budget=0); arms opt in via SENTINEL_GATE_BUDGET / SENTINEL_GATE_AT.
+    """
+
+    def __init__(self, budget: int, at: float = 0.8):
+        self.trigger = -(-budget * at // 1) if budget else 0
+        self.attempts: dict = {}
+
+    def blocks(self, session: str) -> bool:
+        if not self.trigger:
+            return False
+        return self.attempts.get(session, 0) >= self.trigger
+
+    def count(self, session: str) -> None:
+        self.attempts[session] = self.attempts.get(session, 0) + 1
+
+
 def main() -> None:
     note_file = os.environ.get("SENTINEL_NOTE_FILE", "/tmp/odr_sentinel_notes.jsonl")
     state_file = os.environ.get("SENTINEL_STATE_FILE", "/tmp/odr_sentinel_state.json")
     call_log = os.environ.get("ODR_CALL_LOG", "")
     sentinel_on = os.environ.get("SENTINEL_OFF") != "1"
     engine = SentinelEngine(state_path=Path(state_file)) if sentinel_on else None
+    gate = PermuteGate(int(os.environ.get("SENTINEL_GATE_BUDGET", "0") or 0),
+                       float(os.environ.get("SENTINEL_GATE_AT", "0.8")))
     sandbox = SandboxProvider() if os.environ.get("SPOLKI_SERVE") == "1" else None
 
     def emit(obj):
@@ -153,6 +184,17 @@ def main() -> None:
                                          "text": note or "brak znanej klasy błędu dla tego narzędzia"}],
                             "isError": False})
             elif sandbox is not None and name in TOOL_NAMES:
+                sid = os.environ.get("SENTINEL_SESSION", "mcp-default")
+                gate.count(sid)  # count attempts INCLUDING gated ones
+                if gate.blocks(sid):
+                    text = json.dumps(REFUSAL)
+                    if call_log:
+                        with open(call_log, "a", encoding="utf-8") as f:
+                            f.write(json.dumps({"tool": name,
+                                                "ok": False}) + "\n")
+                    ok(req_id, {"content": [{"type": "text", "text": text}],
+                                "isError": True})
+                    continue
                 if name == "fetch_company" or name == "krs_lookup":
                     if str(args.get("krs", "")):
                         sandbox.set_current(args.get("krs", ""))
