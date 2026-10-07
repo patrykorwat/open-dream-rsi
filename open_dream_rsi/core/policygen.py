@@ -23,7 +23,16 @@ A candidate module must define::
 where ``frontier`` is a list of node observations::
 
     {"node_id": str, "action": str, "score": float, "parent_id": str|None,
-     "children": int, "outcome": float, "errors": list[str]}
+     "children": int, "outcome": float, "errors": list[str],
+     "sentinel_signature": str, "sentinel_repeat": int,
+     "sentinel_blocked": bool}
+
+``sentinel_*`` fields are the structured facts the Sentinel engine recorded
+on the node when it was created (error-class signature, episode-local
+recurrence, gate refusal). They are replay-safe by construction: recorded
+at the node's own time and stripped of cross-session counters
+(``SentinelObservation.to_world_dict``), so they can never carry a future
+fact into a counterfactual rollout.
 
 and the return is the ``node_id`` to expand next (or ``{"node_id": ...}``).
 
@@ -72,14 +81,20 @@ POLICY_CONTRACT = (
     "        ...\n"
     "frontier is a list of dicts: {'node_id': str, 'action': str, "
     "'score': float, 'parent_id': str|None, 'children': int, "
-    "'outcome': float, 'errors': list[str], 'thought': str}. Return the "
+    "'outcome': float, 'errors': list[str], 'thought': str, "
+    "'sentinel_signature': str, 'sentinel_repeat': int, "
+    "'sentinel_blocked': bool}. Return the "
     "node_id (str) of the node to expand next. 'score' is what the verifier "
     "gave that node's own attempt; 'children' is how often it was expanded "
     "so far; 'outcome' is the best score found anywhere below it (equal to "
     "its score when unexplored); 'errors' lists which tests still fail on "
     "it; 'thought' is the model's one-line plan for that attempt (may be "
     "empty) — nodes sharing idea words belong to the same idea family. "
-    "Beware DECOY "
+    "'sentinel_signature' groups nodes that hit the SAME failure class "
+    "(empty when clean), 'sentinel_repeat' is how often that class "
+    "recurred inside the episode at that point, 'sentinel_blocked' means "
+    "the runtime refused further work at that node (option removed, not "
+    "declined). Beware DECOY "
     "TRAPS: a high-score leaf whose errors never change is plausible code "
     "that will fail hidden tests forever — re-expanding it burns the budget, "
     "while branches with different (or no) failures hide the real prize. "
@@ -381,6 +396,13 @@ def frontier_entry(node: Any, outcomes: Dict[str, float]) -> Dict[str, Any]:
     result = node.result
     if isinstance(result, dict):
         errors = result.get("errors") or []
+    # Structured Sentinel facts (TreeNode.sentinel, commit 2) as primitive
+    # policy features: identity of the failure class, its episode-local
+    # recurrence, and whether an enforcement gate refused to serve here.
+    # Defaults make nodes WITHOUT metadata (cold runs, legacy trees) look
+    # exactly like clean-and-unblocked ones, so a policy written against
+    # these fields cannot crash on trees that never observed anything.
+    sent = getattr(node, "sentinel", None) or {}
     return {
         "node_id": node.node_id,
         "action": node.action,
@@ -390,6 +412,9 @@ def frontier_entry(node: Any, outcomes: Dict[str, float]) -> Dict[str, Any]:
         "outcome": outcomes.get(node.node_id, node.score),
         "errors": [str(e)[:160] for e in errors[:3]],
         "thought": str(getattr(node, "thought", "") or "")[:160],
+        "sentinel_signature": str(sent.get("signature") or "")[:16],
+        "sentinel_repeat": int(sent.get("repeat_world") or 0),
+        "sentinel_blocked": bool(sent.get("blocked")),
     }
 
 
@@ -660,6 +685,13 @@ class PolicyGenerator:
             errs_txt = (" errors=" + "; ".join(str(e)[:40] for e in errs[:2])) if errs else ""
             thought = str(getattr(node, "thought", "") or "")[:60]
             thought_txt = f"  thought='{thought}'" if thought else ""
+            sent = getattr(node, "sentinel", None) or {}
+            sentinel_txt = ""
+            if sent.get("signature"):
+                sentinel_txt = (f"  same_error={int(sent.get('repeat_world') or 0)}"
+                                f" sig={str(sent['signature'])[:8]}")
+                if sent.get("blocked"):
+                    sentinel_txt += " blocked"
             lines.append(f"  {node.node_id}  action={node.action}  "
-                         f"score={node.score:.3f}  children={len(node.children)}{errs_txt}{thought_txt}")
+                         f"score={node.score:.3f}  children={len(node.children)}{errs_txt}{sentinel_txt}{thought_txt}")
         return "\n".join(lines) or "(empty)"
