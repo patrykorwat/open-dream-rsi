@@ -47,7 +47,7 @@ from open_dream_rsi.core.policygen import (
 )
 from open_dream_rsi.core.judge import LLMJudge
 from open_dream_rsi.core.simulator import ReplaySimulator
-from open_dream_rsi.core.tree import DiscoveryTree
+from open_dream_rsi.core.tree import DiscoveryTree, TerminationReason
 from open_dream_rsi.memory import DreamMemory
 from open_dream_rsi.tools import CodeVerifier, ToolResult
 
@@ -162,6 +162,7 @@ class AutoRSIRuntime:
         explore_epsilon: float = 0.15,
         rng_seed: int = 0,
         enable_judge: bool = True,
+        sentinel_engine: Any = None,
     ):
         self.client = client
         self.memory = memory
@@ -205,6 +206,12 @@ class AutoRSIRuntime:
         # families" when measuring the arm.
         self.thought_steering = thought_steering
         self._curator = KnowledgeCurator(client, max_tokens=max_tokens)
+        # Optional SentinelEngine (open_dream_rsi.sentinel): when injected,
+        # every verification result is also observed STRUCTURALLY and its
+        # replay-safe facts land on the tree node (node.sentinel), and the
+        # episode's stop cause is recorded (node.termination_reason).
+        # Default None = trees byte-identical to pre-observation runs.
+        self.sentinel = sentinel_engine
 
     def _emit(self, kind: str, **data: Any) -> None:
         """Push a live event to an optional observer (dashboard, logger, ...)."""
@@ -301,6 +308,7 @@ class AutoRSIRuntime:
         improved = ""
         failures: List[Dict[str, Any]] = []
         surfaced: set = set()
+        last_node = None  # last verification node this episode created
         for _ in range(task.max_attempts):
             if self.api_calls_used >= self.api_call_budget:
                 break
@@ -341,6 +349,23 @@ class AutoRSIRuntime:
                 thought=thought[:240] if self.enable_thoughts else "",
             )
             state_id = node.node_id
+            if self.sentinel is not None:
+                # Structured twin of the host annotation channel: the same
+                # engine, but its OBSERVATION (not its prose) becomes part of
+                # the world. to_world_dict() is replay-safe by construction;
+                # the session id makes recurrence episode-local (per task),
+                # and the verifier verdict is authoritative (status=).
+                try:
+                    obs = self.sentinel.observe_structured(
+                        tool="verify", result=None, session_id=task.task_id,
+                        status="ok" if result.ok else "error",
+                        error_message=None if result.ok
+                        else str(result.detail)[:2000])
+                    node.sentinel = obs.to_world_dict()
+                except Exception as exc:  # observation must never break the loop
+                    self.memory.log_event("sentinel_error",
+                                          task_id=task.task_id, error=str(exc)[:200])
+            last_node = node
             if result.solved:
                 solved = True
                 if self.memory.save_recipe(category, code, score=result.score):
@@ -359,6 +384,18 @@ class AutoRSIRuntime:
             feedback = str(result.detail)[:600]
             failures.append({"action": node.action, "score": result.score,
                              "errors": [str(e)[:160] for e in (result.detail if isinstance(result.detail, list) else [result.detail])][:3]})
+
+        # Honest stop cause for replay: "the task solved here" and "the
+        # runtime ran out of attempts/API budget here" mean OPPOSITE things
+        # to a counterfactual rollout (Dream-RSI prefix-only replay; the
+        # TravelPlanner study: 91/91 undelivered cold episodes died at the
+        # harness cap, i.e. the option was REMOVED, never declined).
+        # Recorded only when a sentinel engine is wired — default trees are
+        # byte-identical to pre-metadata runs.
+        if self.sentinel is not None and last_node is not None:
+            last_node.termination_reason = (
+                TerminationReason.COMPLETED.value if solved
+                else TerminationReason.BUDGET_GATE.value)
 
         # One usage bump per lesson per cycle: surfaced = the lesson was put
         # in front of the model; win = the task it was surfaced for solved.

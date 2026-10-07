@@ -4,7 +4,8 @@ Recursive Self-Improvement by "dreaming" offline over the agent's
 discovery tree, without modifying model weights.
 """
 
-from open_dream_rsi.core.tree import DiscoveryTree, TreeNode
+from open_dream_rsi.core.tree import DiscoveryTree, TerminationReason, TreeNode
+from open_dream_rsi.sentinel import SentinelEngine, SentinelObservation
 from open_dream_rsi.core.simulator import ReplaySimulator
 from open_dream_rsi.core.dreamer import DreamEngine
 from open_dream_rsi.core.agent import DreamAgent
@@ -39,6 +40,9 @@ __version__ = "0.2.0"
 __all__ = [
     "DiscoveryTree",
     "TreeNode",
+    "TerminationReason",
+    "SentinelEngine",
+    "SentinelObservation",
     "ReplaySimulator",
     "DreamEngine",
     "DreamAgent",

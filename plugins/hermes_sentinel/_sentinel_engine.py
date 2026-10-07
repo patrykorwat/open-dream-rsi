@@ -54,6 +54,7 @@ import os
 import re
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -130,6 +131,68 @@ def classify(tool: str, result: Any,
 
 def signature_key(tool: str, payload: str) -> str:
     return hashlib.sha1((tool + "|" + payload).encode()).hexdigest()[:12]
+
+
+# -- structured observation --------------------------------------------------------
+
+@dataclass(frozen=True)
+class SentinelObservation:
+    """What the engine observed about ONE tool result — data, not prose.
+
+    ``observe()`` renders human-facing note text; consumers inside the ODR
+    world (DiscoveryTree nodes, replay, policygen) must not parse prose.
+    This dataclass is the internal contract: the note stays a *rendering*
+    of the same facts, produced by adapters.
+
+    Epistemic split (Dream-RSI prefix-only replay):
+    * ``in_session_count``  — recurrence inside the current episode; known
+      to the agent at this node, safe for replay.
+    * ``cross_session_count`` — knowledge from OTHER episodes (possibly
+      future ones); live hosts and the curator may use it, it must NEVER
+      enter replay-visible node state. Use ``to_world_dict()`` for nodes.
+    """
+
+    signature: str                      # signature_key(tool, normalized payload)
+    error_class: Optional[str]          # normalized payload ("tool|<path> failed"), None if clean
+    in_session_count: int               # this class, this session, including this hit (0 if clean)
+    cross_session_count: int            # this class, all tracked sessions (LEAKAGE-PRONE)
+    recurring: bool                     # note thresholds newly crossed by this hit
+    finalize_nudge: bool                # budget nudge fired on this call
+    budget_used: Optional[int]          # session tool calls so far (None if no budget tracked)
+    budget_total: Optional[int]
+    blocked: bool = False               # set by a co-located gate (PermuteGate), not by the engine
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Full view — live hosts, curator, event log. Contains cross-session
+        counters, so NEVER persist this into replay-visible node state."""
+        return {
+            "signature": self.signature,
+            "error_class": self.error_class,
+            "in_session_count": self.in_session_count,
+            "cross_session_count": self.cross_session_count,
+            "recurring": self.recurring,
+            "finalize_nudge": self.finalize_nudge,
+            "budget_used": self.budget_used,
+            "budget_total": self.budget_total,
+            "blocked": self.blocked,
+        }
+
+    def to_world_dict(self) -> Dict[str, Any]:
+        """Replay-safe view for TreeNode.sentinel: only facts the agent
+        could know AT this node inside its own episode. cross_session_count
+        is stripped by construction — an observation from another (possibly
+        future) session leaking into the historical world would falsify the
+        counterfactual replay."""
+        d: Dict[str, Any] = {
+            "signature": self.signature,
+            "repeat_world": self.in_session_count,
+            "recurring": self.recurring,
+            "blocked": self.blocked,
+        }
+        if self.budget_total:
+            d["budget_fraction"] = round(
+                min(self.budget_used or 0, self.budget_total) / self.budget_total, 3)
+        return d
 
 
 # -- note --------------------------------------------------------------------------
@@ -279,62 +342,118 @@ class SentinelEngine:
 
         Every call counts toward the session's tool-call budget; the
         finalize nudge is budget-driven and therefore also fires on clean
-        results (see module docstring for the measurement)."""
+        results (see module docstring for the measurement).
+
+        This is the TEXT contract for host adapters (Hermes/Claude/hook
+        hosts, byte-pinned vendored copies). In-world consumers
+        (DiscoveryTree, replay, policygen) must use ``observe_structured``
+        — they may not parse prose."""
         eff_budget = int(budget) if budget else self.finalize_budget
         nudge = None
         if eff_budget:
-            with self._lock:
-                used = self._calls.get(session_id, 0) + 1
-                self._calls[session_id] = used
-                if len(self._calls) > MAX_SESSIONS_TRACKED:
-                    for dead in list(self._calls)[:len(self._calls)
-                                   - MAX_SESSIONS_TRACKED]:
-                        self._calls.pop(dead, None)
-                        self._nudged.pop(dead, None)
-                        self._session_notes.pop(dead, None)
-                trigger = int(-(-eff_budget * self.finalize_at // 1))  # ceil
-                if used >= trigger and not self._nudged.get(session_id):
-                    self._nudged[session_id] = True
-                    nudge = FINALIZE_TEMPLATE.format(
-                        used=used, total=eff_budget)
+            used, fired = self._count_call(session_id, eff_budget)
+            if fired:
+                nudge = FINALIZE_TEMPLATE.format(
+                    used=used, total=eff_budget)
         note = self._observe_error(tool, result, session_id,
                                    status, error_message)
         if nudge and note:
             return nudge + note
         return nudge or note
 
+    def observe_structured(self, tool: str, result: Any, session_id: str,
+                           status: Optional[str] = None,
+                           error_message: Optional[str] = None,
+                           budget: Optional[int] = None,
+                           blocked: bool = False) -> SentinelObservation:
+        """Structured twin of ``observe()``: identical counting, thresholds
+        and persistence, but it returns the OBSERVATION as data instead of
+        rendering note text. Same engine, same ledger — feeding both APIs
+        interleaved is safe and consistent.
+
+        ``blocked`` is a passthrough for a co-located enforcement layer
+        (e.g. PermuteGate in the MCP server): the engine itself never
+        blocks, but the world should record both facts on the node."""
+        eff_budget = int(budget) if budget else self.finalize_budget
+        nudge = False
+        used = total = None
+        if eff_budget:
+            used, nudge = self._count_call(session_id, eff_budget)
+            total = eff_budget
+        payload, info, _note = self._observe_error_info(
+            tool, result, session_id, status, error_message)
+        if info is None:  # clean result: nothing to fingerprint
+            return SentinelObservation(
+                signature="", error_class=None, in_session_count=0,
+                cross_session_count=0, recurring=False,
+                finalize_nudge=nudge, budget_used=used,
+                budget_total=total, blocked=blocked)
+        return SentinelObservation(
+            signature=info["signature"], error_class=payload,
+            in_session_count=info["in_session"],
+            cross_session_count=info["count"],
+            recurring=info["recurring"], finalize_nudge=nudge,
+            budget_used=used, budget_total=total, blocked=blocked)
+
+    def _count_call(self, session_id: str,
+                    eff_budget: int) -> "tuple[int, bool]":
+        """Register one tool call against the session budget; return
+        (used, nudge_newly_fired). Shared by observe()/observe_structured()
+        so both channels tax the budget exactly once per call."""
+        with self._lock:
+            used = self._calls.get(session_id, 0) + 1
+            self._calls[session_id] = used
+            if len(self._calls) > MAX_SESSIONS_TRACKED:
+                for dead in list(self._calls)[:len(self._calls)
+                               - MAX_SESSIONS_TRACKED]:
+                    self._calls.pop(dead, None)
+                    self._nudged.pop(dead, None)
+                    self._session_notes.pop(dead, None)
+            trigger = int(-(-eff_budget * self.finalize_at // 1))  # ceil
+            fired = used >= trigger and not self._nudged.get(session_id)
+            if fired:
+                self._nudged[session_id] = True
+        return used, fired
+
     def _observe_error(self, tool: str, result: Any, session_id: str,
                        status: Optional[str] = None,
                        error_message: Optional[str] = None) -> Optional[str]:
+        """The recurrence channel, text view: the note or None."""
+        return self._observe_error_info(
+            tool, result, session_id, status, error_message)[2]
+
+    def _observe_error_info(self, tool: str, result: Any, session_id: str,
+                            status: Optional[str] = None,
+                            error_message: Optional[str] = None):
         """The recurrence channel: counts normalized error classes, emits a
         one-per-(class, session) declarative note at the repeat threshold,
-        bounded per session by ``max_notes_per_session``."""
+        bounded per session by ``max_notes_per_session``.
+
+        Returns ``(payload, info, note)``; ``payload``/``info`` are None
+        for clean results. The note cap suppresses only the rendered TEXT
+        — the count and the structured facts are always recorded."""
         payload = classify(tool, result, status, error_message)
         if payload is None:
-            return None
+            return None, None, None
         with self._lock:
-            if (self.max_notes_per_session
-                    and self._session_notes.get(session_id, 0)
-                    >= self.max_notes_per_session):
-                # note volume correlates with doom-looping (goose study);
-                # count the hit, stop annotating this session.
-                self._count_hit(tool, payload, session_id)
-                self._write()
-                return None
-            note = self._count_hit(tool, payload, session_id)
-            if note:
+            capped = bool(self.max_notes_per_session
+                          and self._session_notes.get(session_id, 0)
+                          >= self.max_notes_per_session)
+            info = self._count_hit(tool, payload, session_id)
+            if info["recurring"] and not capped:
                 self._session_notes[session_id] = \
                     self._session_notes.get(session_id, 0) + 1
             self._write()
-            return note
+        return payload, info, (None if capped else info["note"])
 
     def _count_hit(self, tool: str, payload: str,
-                   session_id: str) -> Optional[str]:
-        """Record one error occurrence; return the note if the repeat
-        threshold is newly crossed for this (class, session). Caller holds
-        the lock and performs persistence."""
+                   session_id: str) -> Dict[str, Any]:
+        """Record one error occurrence; return the count facts, with
+        ``note`` set when the repeat threshold is newly crossed for this
+        (class, session). Caller holds the lock and performs persistence."""
+        sig = signature_key(tool, payload)
         rec = self._sigs.setdefault(
-            signature_key(tool, payload),
+            sig,
             {"tool": tool, "example": payload[:EXAMPLE_LEN], "sessions": [],
              "count": 0, "notified": [], "session_hits": {}, "last_ts": 0.0})
         rec["count"] = int(rec.get("count", 0)) + 1
@@ -354,12 +473,15 @@ class SentinelEngine:
                            key=lambda k: self._sigs[k].get("last_ts", 0))
             for dead in order[:len(self._sigs) - self.max_tracked]:
                 self._sigs.pop(dead, None)
-        if (session_id in rec.setdefault("notified", [])
-                or not (in_session >= self.intra or n_sessions >= self.cross)):
-            return None
-        rec["notified"].append(session_id)
-        del rec["notified"][:-MAX_NOTIFIED_PER_SIG]
-        return build_note(tool, rec, in_session, n_sessions)
+        note = None
+        if (session_id not in rec.setdefault("notified", [])
+                and (in_session >= self.intra or n_sessions >= self.cross)):
+            note = build_note(tool, rec, in_session, n_sessions)
+            rec["notified"].append(session_id)
+            del rec["notified"][:-MAX_NOTIFIED_PER_SIG]
+        return {"signature": sig, "in_session": in_session,
+                "sessions": n_sessions, "count": int(rec.get("count", 0)),
+                "recurring": note is not None, "note": note}
 
     # -- introspection
 
