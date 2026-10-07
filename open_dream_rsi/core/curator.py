@@ -32,7 +32,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 #: Hard caps enforced by the structural gate — oversized or vague records
@@ -47,7 +47,10 @@ MAX_LESSONS_PER_CATEGORY = 8
 MAX_LESSONS_IN_PROMPT = 4
 MAX_PROMPT_LESSON_CHARS = 700
 #: Pruning: a lesson used this many times with zero recorded solves is
-#: dead weight and gets evicted to keep the KB from rotting.
+#: dead weight and gets retired to keep the KB from rotting. Retirement is
+#: a LIFECYCLE transition (STALE -> ARCHIVED via the Artifact Lifecycle
+#: Manager, issue #3) — the record remains addressable and auditable, it
+#: merely leaves the runtime-active view.
 PRUNE_MIN_USES = 4
 #: Evidence snippets stored per lesson (audit trail for `odr status`).
 MAX_EVIDENCE_PER_LESSON = 5
@@ -106,6 +109,9 @@ class CurationResult:
     merged: int
     dropped: List[str]
     entries: List[Dict[str, Any]]
+    #: lesson keys whose evidence was refreshed by this pass (the loop
+    #: mirrors them into the Artifact Lifecycle Manager as annotations).
+    merged_keys: List[str] = field(default_factory=list)
 
     @property
     def changed(self) -> bool:
@@ -172,12 +178,18 @@ def extract_json_array(reply: str) -> Optional[List[Any]]:
 def curate_lessons(existing: List[Dict[str, Any]],
                    distilled: List[Dict[str, str]],
                    evidence: Optional[List[str]] = None,
-                   staging: bool = True) -> CurationResult:
-    """Merge validated lessons into the KB: dedupe, refresh evidence, prune.
+                   staging: bool = True,
+                   pinned_keys: Optional[List[str]] = None) -> CurationResult:
+    """Merge validated lessons into the KB: dedupe, refresh evidence, retire.
 
     Same-key entries MERGE (evidence grows, timestamp refreshes) instead of
-    duplicating. Dead lessons (used often, zero wins) are evicted; the
+    duplicating. Dead lessons (used often, zero wins) are dropped from the
+    runtime-active view — the caller retires them through the Artifact
+    Lifecycle Manager (STALE -> ARCHIVED), never by silent deletion. The
     strongest ``MAX_LESSONS_PER_CATEGORY`` survive by (wins, uses, recency).
+
+    ``pinned_keys``: lesson keys pinned in the ALM are protected from BOTH
+    automatic retirement passes (dead-prune and capacity eviction).
 
     New lessons enter as ``status="staging"`` (default): they never reach a
     proposal prompt until the paired-replay gate promotes them (the loop's
@@ -187,9 +199,11 @@ def curate_lessons(existing: List[Dict[str, Any]],
     directly active: use it only for pre-vetted/human-seeded knowledge.
     """
     status = "staging" if staging else "active"
+    pinned = set(pinned_keys or [])
     by_key = {lesson_key(l): dict(l) for l in existing}
     added: List[Dict[str, Any]] = []
     merged = 0
+    merged_keys: List[str] = []
     now = time.time()
     for item in distilled:
         key = lesson_key(item)
@@ -202,6 +216,7 @@ def curate_lessons(existing: List[Dict[str, Any]],
             entry["evidence"] = ev[-MAX_EVIDENCE_PER_LESSON:]
             entry["updated_at"] = now
             merged += 1
+            merged_keys.append(key)
         else:
             entry = {"trigger": item["trigger"], "text": item["text"],
                      "created_at": now, "updated_at": now,
@@ -211,6 +226,8 @@ def curate_lessons(existing: List[Dict[str, Any]],
             added.append(entry)
     dropped: List[str] = []
     for key, entry in by_key.items():
+        if key in pinned:
+            continue  # pinned lessons are protected from automatic retirement
         if int(entry.get("uses", 0)) >= PRUNE_MIN_USES and int(entry.get("wins", 0)) == 0:
             dropped.append(key)
     survivors = [e for k, e in by_key.items() if k not in set(dropped)]
@@ -218,10 +235,14 @@ def curate_lessons(existing: List[Dict[str, Any]],
         survivors.sort(key=lambda e: (int(e.get("wins", 0)), int(e.get("uses", 0)),
                                       float(e.get("updated_at", 0))), reverse=True)
         for e in survivors[MAX_LESSONS_PER_CATEGORY:]:
-            dropped.append(lesson_key(e))
-        survivors = survivors[:MAX_LESSONS_PER_CATEGORY]
+            key = lesson_key(e)
+            if key in pinned:
+                continue
+            dropped.append(key)
+        survivors = [e for e in survivors
+                     if lesson_key(e) not in set(dropped)][:MAX_LESSONS_PER_CATEGORY]
     return CurationResult(added=added, merged=merged, dropped=dropped,
-                          entries=survivors)
+                          entries=survivors, merged_keys=merged_keys)
 
 
 def select_lessons(lessons: List[Dict[str, Any]], task_prompt: str,

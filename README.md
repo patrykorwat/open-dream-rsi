@@ -414,6 +414,49 @@ where there is measurable headroom to spend it against.
 
 ---
 
+## Learning vs lifecycle vs history (issue #3: the Artifact Lifecycle Manager)
+
+The repository keeps four planes strictly apart:
+
+| Plane | Owner | Question it answers |
+|---|---|---|
+| **Learning** | Dream-RSI pipeline (dreamer, replay gate, lesson gate) | Does this artifact *deserve* to be active? |
+| **Current artifact state** | `ArtifactLifecycleManager` (`lifecycle.py`) | What is true about this artifact *now* (`ArtifactState`)? |
+| **Transition history** | append-only `artifacts/events.jsonl` | How did it get here (`ArtifactTransitionEvent`)? |
+| **Immutable evidence** | Discovery Trees + the event logs | Why do these artifacts exist, and what world produced them? |
+
+**Dream-RSI owns learning. ALM owns artifact lifecycle. The event log owns
+transition history. Discovery Trees own historical world evidence.**
+
+The ALM manages four artifact types — `policy_parameters`, `policy_program`,
+`recipe`, `lesson` — through an explicit state machine
+(`CANDIDATE → VALIDATED → ACTIVE → STALE/SUPERSEDED/QUARANTINED → ARCHIVED`,
+plus terminal `REJECTED`). Its hard rules:
+
+- activation is *only* an explicit `activate()`/promotion call — never
+  "newer, similar or plausible"; the lesson gate and replay promotion remain
+  the sole behavioral authorities, the ALM just records their decisions;
+- every state-changing method appends exactly one immutable event **before**
+  exposing the new state; an invalid transition is never committed;
+- the materialized `states.json` view must always equal
+  `rebuild_artifact_state(events)` — a hand-edited view is rebuilt from the
+  log, never trusted (`verify_materialization()`);
+- merge creates a NEW artifact with `supersedes` lineage to every source and
+  never mutates the sources; rollback derives a new ACTIVE version instead
+  of erasing the promoted version's history;
+- pinned artifacts are skipped by automatic staleness and GC; quarantined
+  artifacts have no automatic path back to ACTIVE (restore re-enters through
+  VALIDATED + successful validation);
+- physical deletion is separate from lifecycle state and NEVER prunes the
+  event log — deletion itself is an `artifact.deleted` audit event.
+
+Discovery Trees and audit events are **evidence, not artifacts**: the ALM
+refuses to register, activate, supersede or merge them; replay keeps
+operating on historical trees without mutation. Inspect the store with
+`odr artifacts [--type lesson --state ACTIVE --history]`.
+
+---
+
 ## Security model
 
 Candidate code — both task solutions and policy programs — runs in a
@@ -492,6 +535,7 @@ dreamed-policy gauges per category and the learned recipe library.
 | `core.curator` | lesson distillation, headroom verdict, gate verdict |
 | `core.judge` | completion judge for test-less (`criteria`) tasks |
 | `loop` | `AutoRSIRuntime` — the autonomous supervisor (opt-in `sentinel_engine`) |
+| `lifecycle` | `ArtifactLifecycleManager` — state machine, event-sourced history, lineage, GC |
 | `memory` | `DreamMemory` — policies, recipes, lessons, trees, events |
 | `sandbox` | `run_isolated` — the single untrusted-code execution boundary |
 | `tools` | `CodeVerifier` — sandboxed verification of candidate solutions |

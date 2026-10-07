@@ -48,6 +48,10 @@ from open_dream_rsi.core.policygen import (
 from open_dream_rsi.core.judge import LLMJudge
 from open_dream_rsi.core.simulator import ReplaySimulator
 from open_dream_rsi.core.tree import DiscoveryTree, TerminationReason
+from open_dream_rsi.lifecycle import (
+    ArtifactLifecycleError,
+    ArtifactLifecycleManager,
+)
 from open_dream_rsi.memory import DreamMemory
 from open_dream_rsi.tools import CodeVerifier, ToolResult
 
@@ -163,6 +167,7 @@ class AutoRSIRuntime:
         rng_seed: int = 0,
         enable_judge: bool = True,
         sentinel_engine: Any = None,
+        alm: Optional["ArtifactLifecycleManager"] = None,
     ):
         self.client = client
         self.memory = memory
@@ -212,6 +217,14 @@ class AutoRSIRuntime:
         # episode's stop cause is recorded (node.termination_reason).
         # Default None = trees byte-identical to pre-observation runs.
         self.sentinel = sentinel_engine
+        # Artifact Lifecycle Manager (issue #3): the loop OWNS learning —
+        # what to create and whether a promotion is earned — the ALM OWNS
+        # lifecycle bookkeeping (validation, activation events, staleness,
+        # supersession, retirement) for every artifact the pipeline produces.
+        # It is a mirror of decisions already made, never a second promotion
+        # engine; the legacy JSON stores remain the runtime view (a later
+        # issue cuts runtime reads over to the ALM's ACTIVE set).
+        self.alm = alm if alm is not None else ArtifactLifecycleManager(memory)
 
     def _emit(self, kind: str, **data: Any) -> None:
         """Push a live event to an optional observer (dashboard, logger, ...)."""
@@ -220,6 +233,148 @@ class AutoRSIRuntime:
                 self.on_event(kind, data)
             except Exception:  # an observer must never break the loop
                 pass
+
+    # -- ALM seams (issue #3) ---------------------------------------------------
+    #
+    # These helpers MIRROR decisions the learning pipeline has already made
+    # into the lifecycle store. They never decide anything themselves and an
+    # ALM error must never break a working loop — hence the guards.
+
+    def _alm_sync(self, artifact_type: str, slot: str, payload: Dict[str, Any],
+                  *, reason: str, actor: str) -> None:
+        try:
+            state = self.alm.sync_active(artifact_type, slot, payload,
+                                         reason=reason, actor=actor)
+            if state is not None:
+                self._emit("artifact_active", artifact_id=state.artifact_id,
+                           artifact_type=artifact_type, slot=slot,
+                           version=state.version)
+        except ArtifactLifecycleError as exc:
+            self.memory.log_event("alm_error", slot=slot,
+                                  artifact_type=artifact_type, error=str(exc)[:300])
+
+    @staticmethod
+    def _alm_lesson_slot(category: str, key: str) -> str:
+        return f"lesson:{category}:{key}"
+
+    def _alm_lesson_id(self, category: str, key: str) -> Optional[str]:
+        """The LIVE lifecycle identity backing one lesson KB record.
+
+        Prefers the ACTIVE artifact, then CANDIDATE/VALIDATED; terminal
+        (REJECTED/ARCHIVED/...) identities are skipped so a re-distilled
+        lesson registers as a NEW identity instead of reviving a historical
+        one (issue #3: rejected artifacts never become active directly).
+        """
+        slot = self._alm_lesson_slot(category, key)
+        found = self.alm.states(artifact_type="lesson", slot=slot)
+        for want in ("ACTIVE", "CANDIDATE", "VALIDATED"):
+            for st in found:
+                if st.lifecycle_state == want:
+                    return st.artifact_id
+        return None
+
+    def _alm_register_lessons(self, category: str,
+                              added: List[Dict[str, Any]]) -> None:
+        """Persist freshly distilled lessons as CANDIDATE artifacts and run
+        structural validation (CANDIDATE -> VALIDATED). Staging stays
+        staging: structural validity does NOT imply activation — the paired
+        replay gate decides ACTIVE via _alm_apply_gate_verdict()."""
+        for entry in added:
+            key = lesson_key(entry)
+            if self._alm_lesson_id(category, key):
+                continue  # already live in the lifecycle store
+            try:
+                payload = {k: entry.get(k) for k in
+                           ("trigger", "text", "evidence") if entry.get(k)}
+                cand = self.alm.register_candidate(
+                    "lesson", payload,
+                    slot=self._alm_lesson_slot(category, key),
+                    created_by="knowledge_curator")
+                self.alm.validate(cand.artifact_id, actor="alm")
+            except ArtifactLifecycleError as exc:
+                self.memory.log_event("alm_error", slot=category, lesson=key,
+                                      error=str(exc)[:300])
+
+    def _alm_annotate_lessons(self, category: str,
+                              entries: List[Dict[str, Any]],
+                              keys: List[str]) -> None:
+        """Evidence merged into an existing lesson: annotate the artifact
+        payload (event-recorded, no lifecycle change)."""
+        by_key = {lesson_key(l): l for l in entries}
+        for key in keys:
+            entry = by_key.get(key)
+            if entry is None:
+                continue
+            try:
+                aid = self._alm_lesson_id(category, key)
+                if aid:
+                    payload = {k: entry.get(k) for k in
+                               ("trigger", "text", "evidence") if entry.get(k)}
+                    self.alm.annotate(aid, payload, actor="knowledge_curator",
+                                      reason="evidence merged by curator pass")
+            except ArtifactLifecycleError as exc:
+                self.memory.log_event("alm_error", slot=category, lesson=key,
+                                      error=str(exc)[:300])
+
+    def _alm_retire_lessons(self, category: str, keys: List[str],
+                            *, reason: str) -> None:
+        """Dead/capacity-evicted lessons leave the runtime-active view via
+        the state machine (STALE -> ARCHIVED / REJECTED), never silently."""
+        for key in keys:
+            try:
+                aid = self._alm_lesson_id(category, key)
+                if aid:
+                    self.alm.retire(aid, actor="curator:retirement_policy",
+                                    reason=reason)
+            except ArtifactLifecycleError as exc:
+                self.memory.log_event("alm_error", slot=category, lesson=key,
+                                      error=str(exc)[:300])
+
+    def _alm_apply_gate_verdict(self, category: str,
+                                promoted: List[str],
+                                rejected: List[str]) -> None:
+        """The paired-replay gate is the BEHAVIORAL PROMOTION decision; the
+        ALM executes the transition it decided (VALIDATED -> ACTIVE) or
+        rejects the candidate — the rejection event stays auditable."""
+        for key in promoted:
+            try:
+                aid = self._alm_lesson_id(category, key)
+                if aid:
+                    self.alm.activate(
+                        aid, actor="lesson_gate",
+                        reason="paired-replay promotion: net gain, zero "
+                               "regressions, stop clause present")
+            except ArtifactLifecycleError as exc:
+                self.memory.log_event("alm_error", slot=category, lesson=key,
+                                      error=str(exc)[:300])
+        for key in rejected:
+            try:
+                aid = self._alm_lesson_id(category, key)
+                if aid:
+                    self.alm.reject(aid, actor="lesson_gate",
+                                    reason="paired-replay gate rejected: "
+                                           "no net gain or regression present")
+            except ArtifactLifecycleError as exc:
+                self.memory.log_event("alm_error", slot=category, lesson=key,
+                                      error=str(exc)[:300])
+
+    def _alm_pinned_lesson_keys(self, category: str) -> List[str]:
+        """Lesson keys pinned in the ALM for this category — the curator's
+        automatic retirement passes must skip them."""
+        prefix = f"lesson:{category}:"
+        return [st.slot[len(prefix):] for st in self.alm.states(
+            artifact_type="lesson") if st.pinned and st.slot.startswith(prefix)]
+
+    def _alm_record_lesson_uses(self, category: str, keys: List[str],
+                                *, win: bool) -> None:
+        for key in keys:
+            try:
+                aid = self._alm_lesson_id(category, key)
+                if aid:
+                    self.alm.record_use(aid, win=win)
+            except ArtifactLifecycleError as exc:
+                self.memory.log_event("alm_error", slot=category,
+                                      lesson=key, error=str(exc)[:300])
 
     # -- one full cycle ----------------------------------------------------------
 
@@ -241,7 +396,23 @@ class AutoRSIRuntime:
 
         self.memory.log_event("cycle", **report.to_dict())
         self._emit("cycle_done", **report.to_dict())
+        self._alm_maintenance()
         return report
+
+    def _alm_maintenance(self) -> None:
+        """Deterministic lifecycle housekeeping after each cycle: staleness
+        detection and retention/GC for lifecycle artifacts. Pinned artifacts
+        are excluded by the ALM itself; the event log is never pruned."""
+        try:
+            stale = self.alm.detect_stale()
+            if stale:
+                self.memory.log_event("artifacts_stale", artifact_ids=stale)
+            gc = self.alm.gc()
+            if gc.archived or gc.deleted:
+                self.memory.log_event("artifacts_gc", **gc.to_dict())
+        except ArtifactLifecycleError as exc:
+            self.memory.log_event("alm_error", scope="maintenance",
+                                  error=str(exc)[:300])
 
     def _drain_staging(self, report: CycleReport) -> None:
         """Give never-gated staging lessons a chance on spare budget.
@@ -370,6 +541,11 @@ class AutoRSIRuntime:
                 solved = True
                 if self.memory.save_recipe(category, code, score=result.score):
                     improved = f"{category}: new best solution (score {result.score})"
+                    self._alm_sync("recipe", f"recipe:{category}",
+                                   {"code": code, "score": result.score},
+                                   reason=f"verified solution (score {result.score}) "
+                                          "promoted by the loop",
+                                   actor="dream_rsi_pipeline")
                 break
             if task.task_id not in self._gate_snapshots:
                 # The counterfactual state the lesson must be tested on:
@@ -401,6 +577,7 @@ class AutoRSIRuntime:
         # in front of the model; win = the task it was surfaced for solved.
         if surfaced:
             self.memory.record_lesson_usage(category, sorted(surfaced), win=solved)
+            self._alm_record_lesson_uses(category, sorted(surfaced), win=solved)
 
         # -- offline dreaming on whatever we collected (free, no API) -------------
         self._emit("dreaming", task_id=task.task_id, category=category,
@@ -413,6 +590,10 @@ class AutoRSIRuntime:
         self._emit("dream_done", task_id=task.task_id, category=category, policy=best_policy)
         if self.memory.get_policy(category) != best_policy:
             self.memory.save_policy(category, best_policy)
+            self._alm_sync("policy_parameters", f"policy_parameters:{category}",
+                           {"params": dict(best_policy)},
+                           reason="offline dream improved the policy parameters",
+                           actor="dream_rsi_pipeline")
         # -- section 3: the LLM rewrites the exploration policy itself ------------
         try:
             self._maybe_evolve_policy_code(task, tree, report, solved=solved)
@@ -727,6 +908,12 @@ class AutoRSIRuntime:
                 f"{task.category}: new exploration policy (replay {result.score:.3f})")
             self.memory.log_event("policy_promoted", task_id=task.task_id,
                                   category=task.category, score=result.score)
+            self._alm_sync("policy_program", f"policy_program:{task.category}",
+                           {"code": result.source, "score": result.score,
+                            "steps": steps},
+                           reason=f"replay promotion (score {result.score:.3f} "
+                                  "beat the incumbent)",
+                           actor="dream_rsi_promotion")
             self._emit("policy_promoted", task_id=task.task_id,
                        category=task.category, score=round(result.score, 4),
                        code=result.source[:800])
@@ -776,8 +963,16 @@ class AutoRSIRuntime:
             self._emit("lesson_rejected", task_id=task.task_id,
                        category=task.category, reason=(err or "empty payload")[:200])
             return
-        result = curate_lessons(existing, distilled, evidence=new_snippets)
+        result = curate_lessons(existing, distilled, evidence=new_snippets,
+                                pinned_keys=self._alm_pinned_lesson_keys(task.category))
         self.memory.replace_lessons(task.category, result.entries)
+        self._alm_register_lessons(task.category, result.added)
+        self._alm_annotate_lessons(task.category, result.entries,
+                                   result.merged_keys)
+        if result.dropped:
+            self._alm_retire_lessons(task.category, result.dropped,
+                                     reason="curator retirement: dead weight "
+                                            "or KB capacity")
         self.memory.log_event("lessons_curated", task_id=task.task_id,
                               category=task.category, added=len(result.added),
                               merged=result.merged, dropped=len(result.dropped),
@@ -882,6 +1077,11 @@ class AutoRSIRuntime:
         for key in verdict.rejected:
             entries.pop(key, None)
         self.memory.replace_lessons(task.category, list(entries.values()))
+        # Behavioral promotion belongs to this gate; the ALM merely executes
+        # the decision as recorded transitions (VALIDATED -> ACTIVE / ->
+        # REJECTED) so every activation has an immutable event behind it.
+        self._alm_apply_gate_verdict(task.category, verdict.promoted,
+                                     verdict.rejected)
         self.memory.log_event("lesson_gate", category=task.category,
                               promoted=verdict.promoted,
                               rejected=verdict.rejected,

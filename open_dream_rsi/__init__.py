@@ -25,6 +25,17 @@ from open_dream_rsi.core.curator import (
     validate_lesson_items,
 )
 from open_dream_rsi.utils.evaluator import PolicyEvaluator
+from open_dream_rsi.lifecycle import (
+    ALLOWED_TRANSITIONS,
+    ARTIFACT_TYPES,
+    ArtifactIdentity,
+    ArtifactLifecycleError,
+    ArtifactLifecycleManager,
+    ArtifactState,
+    ArtifactTransitionEvent,
+    InvalidTransitionError,
+    rebuild_artifact_state,
+)
 from open_dream_rsi.llm import LLMConfig, OpenAICompatibleClient, StubClient
 from open_dream_rsi.loop import AutoRSIRuntime, Task, CycleReport
 from open_dream_rsi.memory import DreamMemory
@@ -52,6 +63,15 @@ __all__ = [
     "extract_python_block",
     "validate_policy_source",
     "PolicyEvaluator",
+    "ALLOWED_TRANSITIONS",
+    "ARTIFACT_TYPES",
+    "ArtifactIdentity",
+    "ArtifactLifecycleError",
+    "ArtifactLifecycleManager",
+    "ArtifactState",
+    "ArtifactTransitionEvent",
+    "InvalidTransitionError",
+    "rebuild_artifact_state",
     "KnowledgeCurator",
     "LessonValidationError",
     "curate_lessons",

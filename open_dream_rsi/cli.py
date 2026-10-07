@@ -97,6 +97,36 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_artifacts(args: argparse.Namespace) -> int:
+    """Inspect the Artifact Lifecycle Manager store (issue #3)."""
+    from open_dream_rsi.lifecycle import ArtifactLifecycleManager
+
+    memory = DreamMemory(args.memory)
+    alm = ArtifactLifecycleManager(memory)
+    states = alm.states(artifact_type=args.type,
+                        lifecycle_state=args.state)
+    if args.json:
+        payload = {"materialized_matches_events": alm.verify_materialization(),
+                   "artifacts": [s.to_dict() for s in states]}
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0
+    ok = alm.verify_materialization()
+    print(f"Artifact store: {memory.root / 'artifacts'} "
+          f"({len(alm.all_events())} events, {len(states)} artifacts shown)")
+    print(f"Materialized view == rebuild(events): {'OK' if ok else 'MISMATCH'}")
+    for s in states:
+        print(f"  {s.artifact_id}  [{s.artifact_type}] slot={s.slot} "
+              f"v{s.version} {s.lifecycle_state}"
+              + (" PIN" if s.pinned else "")
+              + (f" supersedes={','.join(s.supersedes)}" if s.supersedes else "")
+              + (f" by={s.superseded_by}" if s.superseded_by else ""))
+        if args.history:
+            for e in alm.history(s.artifact_id):
+                print(f"      #{e.sequence} {e.kind}: {e.from_state or '-'}"
+                      f" -> {e.to_state}  ({e.actor}) {e.reason[:60]}")
+    return 0 if ok else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="odr", description="Open Dream-RSI autonomous supervisor")
     parser.add_argument("--memory", default=".dream_rsi", help="memory directory (one per instance)")
@@ -132,6 +162,21 @@ def main(argv: list[str] | None = None) -> int:
 
     status = sub.add_parser("status", help="show learned policies, recipes, recent events")
     status.set_defaults(func=cmd_status)
+
+    art = sub.add_parser(
+        "artifacts",
+        help="inspect the Artifact Lifecycle Manager store (lifecycle states, "
+             "lineage, transition history, materialization check)")
+    art.add_argument("--type", default=None,
+                     help="filter by artifact type (policy_parameters, "
+                          "policy_program, recipe, lesson)")
+    art.add_argument("--state", default=None,
+                     help="filter by lifecycle state (CANDIDATE, VALIDATED, "
+                          "ACTIVE, STALE, SUPERSEDED, QUARANTINED, ARCHIVED, REJECTED)")
+    art.add_argument("--history", action="store_true",
+                     help="print each artifact's transition history")
+    art.add_argument("--json", action="store_true", help="machine-readable output")
+    art.set_defaults(func=cmd_artifacts)
 
     dash = sub.add_parser("dashboard", help="serve the live web dashboard")
     dash.add_argument("--host", default="0.0.0.0",
