@@ -230,10 +230,14 @@ Honest caveats: the *choice* of gate over persuasion was made knowing
 results on the earlier 101-task validation pool (selection era, archived —
 the eval pass is a preregistered confirmation, not a first exposure); the
 gate's 5 residual eval failures are episodes that called through the
-refusals to the cap anyway. Raw per-episode data ships as
-`fixtures/tp_v3_summary.json` (the figure re-renders from it via
-`paper/make_figures.py`); the goose-side run harness lives in the private
-bench repo. Paper §Evaluation.
+refusals to the cap anyway. Everything behind these numbers is in this
+directory: `benchmarks/travelplanner/` — the sandbox MCP server, the
+episode runner, the official-evaluator wrapper, the exact split CSVs and
+the raw per-episode records. `python3 score.py results/submissions/…`
+reproduces the table above to the task from the committed records; the
+directory README documents prerequisites and the one-command rerun. The
+figure re-renders from `fixtures/tp_v3_summary.json` via
+`paper/make_figures.py`. Paper §Evaluation.
 
 ---
 
@@ -500,6 +504,7 @@ dreamed-policy gauges per category and the learned recipe library.
 | `sentinel` | host-agnostic error-class engine + `SentinelObservation` world contract |
 | `utils.goose` | goose config resolver (CLI + desktop dialects, keychain) |
 | `plugins/*` | Hermes / Claude Code / goose adapters |
+| `benchmarks/travelplanner` | **the benchmark**: sandbox MCP server, episode runner, official-evaluator wrapper, split CSVs, raw published episode records |
 
 ## Tests
 

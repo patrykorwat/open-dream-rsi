@@ -1,0 +1,411 @@
+{
+ "summary": {
+  "n": 79,
+  "delivery": 18,
+  "commonsense_final": 12,
+  "hard_final": 6
+ },
+ "details": [
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7,
+   "solved": true
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7,
+   "solved": true
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "medium",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3,
+   "solved": true
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 3
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5,
+   "solved": true
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 5,
+   "solved": true
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7,
+   "solved": true
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  },
+  {
+   "idx": null,
+   "level": "hard",
+   "days": 7
+  }
+ ]
+}

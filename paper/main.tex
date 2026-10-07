@@ -821,7 +821,10 @@ delivery per split --- dev (train) and the preregistered eval pass; green
 diamonds mark the official final pass rate. Right: holdout tool-call
 histogram --- cold episodes pile up at the 45-call harness cut-off, the gate
 arm's answers land at/just past the 36-call refusal point. Raw per-episode
-data: \texttt{fixtures/tp\_v3\_summary.json}.}
+data, the run harness and the official-evaluator wrapper ship in-repo under
+\texttt{benchmarks/travelplanner/}; re-scoring the committed records
+reproduces every number in this section to the task. Summary fixture:
+\texttt{fixtures/tp\_v3\_summary.json}.}
 \label{fig:tp}
 \end{figure}
 
