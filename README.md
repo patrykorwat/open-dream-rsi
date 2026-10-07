@@ -7,30 +7,62 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-230%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-244%20passing-brightgreen)](tests/)
 
 An open, dependency-free implementation of **Dream-RSI** (*Recursive
 Self-Improvement through Evolving Worlds*, Zheng et al., Google / Google
 DeepMind / UMD, [arXiv:2609.14858](https://arxiv.org/abs/2609.14858)).
 
 The model stays **frozen**. What improves is everything *around* it: the
-exploration policy, the verified-solution library, and the curated lessons
-learned from failures. The loop optimises its own problem-solving strategy
-between runs — persistent memory, replay-gated promotion, budget guards —
-and never touches model weights.
+exploration policy, the verified-solution library, the curated lessons
+learned from failures, and — since v0.2 — the **world model itself**: the
+error-class Sentinel feeds structured, replay-safe observations onto
+discovery-tree nodes, so counterfactual replay can tell *"the policy chose
+to stop"* from *"the runtime removed the option"*. The loop optimises its
+own problem-solving strategy between runs — persistent memory, replay-gated
+promotion, budget guards — and never touches model weights.
 
-**Zero runtime dependencies** (stdlib only), ~6k lines of library code,
-~2.5k lines of tests, MIT license, installable with no build step.
+**Zero runtime dependencies** (stdlib only), ~6.4k lines of library code,
+~3.1k lines of tests, MIT license, installable with no build step.
+
+**Evaluation policy:** this project makes performance claims on exactly
+**one benchmark — goose × TravelPlanner**, public and scored by the
+benchmark's own evaluators ([below](#benchmark-goose--travelplanner-public-externally-scored)).
+The scripted suites (`bench`, `bench-policy`) are **deterministic
+self-checks** — behavioural regression contracts for the machinery — and
+carry no model-quality claim.
 
 ---
 
 ## How it works
 
+```
+                        ┌───────────────┐
+                        │  Frozen LLM   │
+                        └──────┬────────┘
+                               │ proposals
+              online loop      ▼      offline dream
+        ┌──────────── DiscoveryTree ──────────── ReplaySimulator ──────────┐
+        │                     │                          │                 │
+        │              node.sentinel              counterfactual          │
+        │              (Sentinel facts,           rollout scoring         │
+        │               replay-safe)                    │                 │
+        │                     │                         ▼                 │
+        │                     └────→ Policy improvement ────→ next cycle  │
+        │                                                                   │
+   SENTINEL MODE (tool-execution layer)                                     │
+        │          │             │                                          │
+   error-class   nudge       permute-gate ──→ block tool calls             │
+   ledger        (once/session)              past 80% of budget ───────────┘
+```
+
 The loop alternates two phases:
 
 1. **Online execution** — the agent attempts each task with the real LLM and
    a sandboxed verifier, appending every attempt to a per-task
-   *Discovery Tree* (code, tests feedback, score, one-line plan).
+   *Discovery Tree* (code, test feedback, score, one-line plan, and — when a
+   Sentinel engine is wired — structured error-class facts and an explicit
+   termination reason).
 2. **Offline dreaming** — instead of paying for real-world rollouts, the agent
    "dreams" over the recorded history: thousands of strategy variants are
    scored in an in-process replay simulator at zero external-call cost. The
@@ -41,10 +73,13 @@ Beyond parameter-level dreaming, the loop closes section 3 of the paper
 policy itself** as a small Python program, `choose_action(frontier, step)`.
 Candidates are statically validated (AST gate), executed only in a hardened
 subprocess sandbox, and scored by **counterfactual replay rollout** on the
-recorded tree. A candidate replaces the incumbent only on evidence — and the
-incumbent is re-scored on the *current* tree, not trusted at its stored score.
-A crashing or cheating policy can never break the loop: expansion falls back
-to the greedy baseline.
+recorded tree — where each frontier node can now carry Sentinel features
+(`sentinel_signature`, `sentinel_repeat`, `sentinel_blocked`), so a policy
+can learn to abandon a branch whose failure class already blocks it. A
+candidate replaces the incumbent only on evidence — and the incumbent is
+re-scored on the *current* tree, not trusted at its stored score. A crashing
+or cheating policy can never break the loop: expansion falls back to the
+greedy baseline.
 
 ---
 
@@ -90,7 +125,7 @@ A full in-process walkthrough with a mock OpenAI server:
 | Promoted policy programs | `policy_codes.json` | LLM-written `choose_action` steers expansion |
 | Recipe library | `recipes.json` | verified solutions replayed as warm starts |
 | Knowledge base | `lessons.json` | curated, replay-gated lessons (declarative text) |
-| Discovery trees | `trees/` | offline dreaming always has history |
+| Discovery trees | `trees/` | offline dreaming always has history; nodes optionally carry replay-safe Sentinel facts |
 | Audit log | `events.jsonl` | append-only record of every decision |
 
 Switches worth knowing: `--no-policy-code`, `--no-knowledge`, `--no-thoughts`,
@@ -155,37 +190,16 @@ Copy-paste instructions for every supported host:
 
 ---
 
-## Benchmarks
+## Benchmark: goose × TravelPlanner (public, externally scored)
 
-All headline numbers below are produced by a **scripted solver** and are
-claims about the *machinery* (gates, sandboxes, promotion, retrieval), not
-about any particular model. Every figure re-measures with one command.
-
-### API efficiency — `bench`
-
-Two arms, one task suite, one (mock) model; the only difference is the
-library machinery:
-
-```bash
-python -m open_dream_rsi bench --cycles 10 --markdown
-```
-
-| arm | solves | API calls | calls / task·cycle | dream its |
-|---|---|---|---|---|
-| cold_baseline (fresh memory each cycle) | 50 | 150 | 3.0 | 0 |
-| dream_rsi_loop (policies + recipes + dreaming) | 50 | 69 | 1.38 | 3000 |
-
-**54% fewer API calls at equal solve quality** — competitive discovery
-quality at a reduced online budget, at library scale.
-
-### Real-agent benchmark — goose × TravelPlanner (public, externally scored)
-
-Everything above is scripted-machinery measurement. This one is a real
-agent on a public benchmark scored by *its own* evaluators: goose (v1.53)
-planning real itineraries against the official TravelPlanner offline
-database over a stdlib MCP sandbox, on the model
-`Qwen3.8-Flash-Next` served by vLLM — a state-of-the-art-class local model.
-Same endpoint and model across every study in this repo and the paper.
+This is the **only benchmark** in this project — everything else below the
+heading line is machinery self-check. A real agent (goose v1.53) plans real
+itineraries against the official **TravelPlanner** offline database
+(`osunlp/TravelPlanner`) over a stdlib MCP sandbox, scored by the benchmark's
+*own* commonsense and hard-constraint evaluators (nothing in the scoring path
+is ours), on the model `Qwen3.8-Flash-Next` served by vLLM — a
+state-of-the-art-class local model. Same endpoint and model across every
+study in this repo and the paper.
 
 Frozen protocol: iterations only on `train.csv` (45 tasks); one preregistered
 eval pass on official validation rows 102–181 (79 tasks, 60 hard),
@@ -216,16 +230,113 @@ Honest caveats: the *choice* of gate over persuasion was made knowing
 results on the earlier 101-task validation pool (selection era, archived —
 the eval pass is a preregistered confirmation, not a first exposure); the
 gate's 5 residual eval failures are episodes that called through the
-refusals to the cap anyway. Raw per-episode data:
-`fixtures/tp_v3_summary.json`; paper §6.4.
+refusals to the cap anyway. Raw per-episode data ships as
+`fixtures/tp_v3_summary.json` (the figure re-renders from it via
+`paper/make_figures.py`); the goose-side run harness lives in the private
+bench repo. Paper §Evaluation.
 
-### Exploration quality — `bench-policy` (decoy traps)
+---
 
-Solve-rate graphs saturate on easy suites and cannot tell good exploration
-from luck, so `bench-policy` hides each fix behind a *low-scoring* branch
-(passes 1/3 tests) past a *plausible decoy* (passes 2/3 forever). A
-score-greedy loop locks onto the decoy and starves; escaping requires
-structural exploration. Five arms, one scripted solver, one budget:
+## Sentinel: from prompt channel to world layer
+
+Curation is *epistemic* — it reads outcomes after episodes end and wakes on
+a schedule. Measured on a real install's session store (~60k tool messages /
+30 days; anonymized fixture in `fixtures/sentinel_audit.json`): a recurring
+error class re-appears **within one session** at a median gap of 4.3 minutes,
+and half of failing calls are same-class repeats. No schedule wins that race,
+so the mechanism lives in the tool-execution layer of the host runtime.
+
+The engine (`open_dream_rsi/sentinel.py`) is host-independent: error-class
+fingerprints (URLs/paths/numbers normalized — different arguments, same
+failure), a durable ledger, and one **declarative** note per class per
+session at a repeat threshold (recurrence facts plus a stop condition,
+never a command — the replay arms showed imperative framing measurably
+extends loops). Clean calls pay zero prompt tax: the note rides only failing
+results. Adapters: Hermes plugin (`plugins/hermes_sentinel/`), Claude Code
+hooks (`plugins/claude_code/`), goose Stop-hook (`plugins/goose/`), and plain
+stdin-JSON CLI for any command-hook host
+(`python -m open_dream_rsi sentinel check`).
+
+**Reactive channels that were measured, in order:** the recurrence note and
+the **finalize nudge** (counts *all* tool calls, fires at most once per
+session at ~80% of the episode's call budget, rides an ordinary tool result —
+never a blocking hook). The TravelPlanner study showed the nudge converts
+**0 of 25** cap-dying episodes it triggered: this model family does not stop
+because text asks it to. What moved the numbers (table above) is **the
+permute-gate — choice removal**: past 80% of the call budget the sandbox
+itself refuses to serve (`SENTINEL_GATE_BUDGET` / `SENTINEL_GATE_AT` on the
+MCP sandbox server, `open_dream_rsi/mcp_server.py`), every further call
+returns `isError` and all persuasion channels stay silent, so answering with
+data in hand becomes the only option.
+
+**The structured seam (new).** Inside the library, Sentinel is no longer
+only a prompt-annotation channel — it is part of the world model, in a
+replay-safe way:
+
+- `SentinelEngine.observe_structured()` returns a frozen `SentinelObservation`
+  (signature, error class, in-session and cross-session counts, recurring,
+  nudge fired, budget, blocked) instead of prose. `observe()` remains a
+  *rendering* of the same facts on the same ledger — the host-facing text
+  contract is byte-pinned and unchanged.
+- `SentinelObservation.to_world_dict()` is the **only** view allowed into
+  `TreeNode.sentinel`: signature, episode-local `repeat_world`, `recurring`,
+  `blocked`, budget fraction. Cross-session counters are stripped by
+  construction — a fact from another (possibly future) session leaking into
+  the historical world would falsify prefix-only counterfactual replay.
+- `TreeNode.termination_reason` records a closed `TerminationReason`
+  (`completed / policy_stop / tool_failure / budget_gate / sentinel_block /
+  unknown`) on the node where an episode stopped: replay can now distinguish
+  *the decision-maker declined to continue* from *the runtime removed the
+  option* — the exact anatomy the TravelPlanner cold arm died by (91/91 at
+  the cap).
+- The LLM-written policy sees these as primitive frontier features
+  (`sentinel_signature`, `sentinel_repeat`, `sentinel_blocked`) with
+  clean-and-unblocked defaults for nodes without metadata — an ON/OFF
+  ablation changes **values, not interface**, so cold arms and legacy trees
+  cost nothing.
+- Wiring is opt-in: `AutoRSIRuntime(sentinel_engine=...)`; the default
+  (`None`) leaves archived trees byte-identical, and both self-check suites
+  reproduce their published numbers unchanged with the seam merged.
+
+Attribution is pinned by tests (`tests/test_policygen_sentinel.py`,
+`tests/test_sentinel_world.py`): the same policy code that reads
+`sentinel_blocked` beats greedy on a tree with a blocked trap and **ties**
+greedy on the identical tree without metadata — the delta is the feature,
+not the code; and a malformed node carrying `cross_session_count` still
+cannot leak into replay. A live-model arm consuming the new features is
+future work; the seam itself ships tested, the *uplift* claim is not made.
+
+---
+
+## Machinery self-checks (deterministic, key-free)
+
+Not benchmarks — behavioural regression contracts: a scripted solver makes
+the model arm a constant, so every delta is attributable to the library's
+gates, sandboxes, promotion and retrieval logic. They exist so a broken
+mechanism fails CI instead of silently mutating a published number, and they
+re-run from a fresh clone in seconds.
+
+### `bench` — the dreaming loop against a cold baseline
+
+| arm | solves | API calls | calls / task·cycle | dream its |
+|---|---|---|---|---|
+| cold_baseline (fresh memory each cycle) | 50 | 150 | 3.0 | 0 |
+| dream_rsi_loop (policies + recipes + dreaming) | 50 | 69 | 1.38 | 3000 |
+
+**54% fewer API calls at equal solve quality** (re-measured on this commit:
+identical to the published table).
+
+```bash
+python -m open_dream_rsi bench --cycles 10 --markdown
+```
+
+### `bench-policy` — decoy traps (exploration contracts)
+
+Solve-rate self-checks saturate on easy suites and cannot tell good
+exploration from luck, so `bench-policy` hides each fix behind a
+*low-scoring* branch (passes 1/3 tests) past a *plausible decoy* (passes 2/3
+forever). A score-greedy loop locks onto the decoy and starves; escaping
+requires structural exploration. Five arms, one scripted solver, one budget:
 
 ```bash
 python -m open_dream_rsi bench-policy --cycles 8 --format md
@@ -255,7 +366,7 @@ python -m open_dream_rsi bench-policy --cycles 8 --format md
 
 ![Decoy-trap suite: per-cycle solve rate, five arms](docs/screenshots/odr_policy_bench.png)
 
-### Would a lesson set have been promoted? `gate-replay`
+### `gate-replay` — would a lesson set have been promoted?
 
 Applies the shipped promotion rule (`lesson_gate_verdict`) to per-task
 outcome pairs from any recorded replay harness — no model, no GPU:
@@ -296,52 +407,6 @@ prompts frame the KB as declarative background; and a per-category
 calls/solve ≤ 5) spends zero curator/gate calls where the cold baseline
 already wins. Guidance pays a perturbation tax — the loop only pays it
 where there is measurable headroom to spend it against.
-
----
-
-## Error-class sentinel (deployment artifact)
-
-Curation above is *epistemic* — it reads outcomes after episodes end and
-wakes on a schedule. Measured on a real install's session store (~60k tool
-messages / 30 days; anonymized fixture in `fixtures/sentinel_audit.json`):
-a recurring error class re-appears **within one session** at a median gap
-of 4.3 minutes, and half of failing calls are same-class repeats. No
-schedule wins that race, so the mechanism moves into the tool-execution
-layer of the host runtime.
-
-The engine (`open_dream_rsi/sentinel.py`) is host-independent: error-class
-fingerprints (URLs/paths/numbers normalized — different arguments, same
-failure), a durable ledger, and one **declarative** note per class per
-session at a repeat threshold (recurrence facts plus a stop condition,
-never a command — the replay arms showed imperative framing measurably
-extends loops). Clean calls pay zero prompt tax: the note rides only
-failing results. Adapters: Hermes plugin (`plugins/hermes_sentinel/`),
-Claude Code hooks (`plugins/claude_code/`), goose Stop-hook
-(`plugins/goose/`), and plain stdin-JSON CLI for any command-hook host
-(`python -m open_dream_rsi sentinel check`).
-
-**Second reactive channel — the finalize nudge.** The TravelPlanner study
-above showed the dominant failure mode under budget pressure is
-termination, not error recovery, and that a Stop-hook delivery burns the
-turn it tries to save. The nudge therefore counts *all* tool calls (clean
-and failing), fires **at most once per session** at ~80% of the episode's
-tool-call budget, and rides an ordinary tool result — never a blocking
-hook. Same declarative framing as the recurrence note, with the stop
-clause aimed at answering, not at more exploring. `max_notes_per_session`
-is an opt-in cap (default 0 = unlimited; episode harnesses pass 8) —
-the production replay fixture shows one legitimate session emitting 24
-notes, so the engine must not cap by default.
-
-**Third mechanism — the permute-gate (the one that won).** The nudge was
-later measured to convert **0 of 25** cap-dying episodes it triggered on
-(selection-era runs): this model family does not stop because text asks it
-to. What moved the numbers (table above) is
-*choice removal*: past 80% of the call budget the sandbox itself refuses to
-serve — every further call returns `isError` and all persuasion channels
-stay silent, so answering with data in hand becomes the only option. Shipped
-as `SENTINEL_GATE_BUDGET`/`SENTINEL_GATE_AT` on the MCP server
-(`open_dream_rsi/mcp_server.py` semantics), independent of the note/nudge
-channels.
 
 ---
 
@@ -398,9 +463,11 @@ dreamed-policy gauges per category and the learned recipe library.
   [Pi-RSI](https://github.com/mailbobg/Pi-RSI)).
   What differentiates this repo: an **always-on autonomous supervisor**
   with budget guards, **LLM-written exploration policies** gated by
-  counterfactual replay (section 3 closed), a dedicated **decoy-trap
-  benchmark**, persistent cross-run memory, and a **negative-results
-  section on memory** that the loop itself enforces.
+  counterfactual replay (section 3 closed), a **public-benchmark
+  measurement** (goose × TravelPlanner) rather than self-scored claims, a
+  deterministic decoy-trap self-check suite, persistent cross-run memory,
+  and a **negative-results section on memory** that the loop itself
+  enforces.
 - **OpenRSI / Frontis-MA1** ([FrontisAI/OpenRSI](https://github.com/FrontisAI/OpenRSI))
   is a different layer: they post-train *weights*; this library optimises
   the *exploration policy around a frozen model* — no training, no GPU, no
@@ -413,14 +480,14 @@ dreamed-policy gauges per category and the learned recipe library.
 
 | Module | Role |
 |---|---|
-| `core.tree` | DiscoveryTree — hypotheses, results, actions, thoughts |
+| `core.tree` | DiscoveryTree — hypotheses, results, actions, thoughts, Sentinel facts, termination reason |
 | `core.simulator` | replay simulation without touching the environment |
 | `core.dreamer` | offline optimisation over recorded history |
 | `core.agent` | LLM agent driven by the rewarded policy |
 | `core.policygen` | policy generation, AST gate, rollout scoring, promotion |
 | `core.curator` | lesson distillation, headroom verdict, gate verdict |
 | `core.judge` | completion judge for test-less (`criteria`) tasks |
-| `loop` | `AutoRSIRuntime` — the autonomous supervisor |
+| `loop` | `AutoRSIRuntime` — the autonomous supervisor (opt-in `sentinel_engine`) |
 | `memory` | `DreamMemory` — policies, recipes, lessons, trees, events |
 | `sandbox` | `run_isolated` — the single untrusted-code execution boundary |
 | `tools` | `CodeVerifier` — sandboxed verification of candidate solutions |
@@ -430,7 +497,7 @@ dreamed-policy gauges per category and the learned recipe library.
 | `proxy` | loopback OpenAI-compatible proxy borrowing goose's upstream |
 | `dashboard` | zero-dependency live web UI |
 | `gate_replay` | offline validation of the lesson promotion rule |
-| `sentinel` | host-agnostic error-class sentinel engine |
+| `sentinel` | host-agnostic error-class engine + `SentinelObservation` world contract |
 | `utils.goose` | goose config resolver (CLI + desktop dialects, keychain) |
 | `plugins/*` | Hermes / Claude Code / goose adapters |
 
@@ -440,14 +507,17 @@ dreamed-policy gauges per category and the learned recipe library.
 python -m unittest discover -s tests          # or: pytest tests/ -q
 ```
 
-226 tests (+10 subtests), stdlib-only: benchmark behavioural contracts (greedy must solve
-nothing; the gated arm must dominate ε; the rollout must be prefix-only),
-sandbox escape regressions, gate semantics, MCP protocol, goose config
-dialects, sentinel channel semantics (nudge fires once per budget,
-merges with recurrence notes, clean calls count toward the budget; the
-permute-gate serves until ceil(0.8·budget) then refuses forever, per
-session; the 30-day production replay must reproduce its recorded note
-count exactly).
+244 tests (+10 subtests), stdlib-only: benchmark behavioural contracts
+(greedy must solve nothing; the gated arm must dominate ε; the rollout must
+be prefix-only), sandbox escape regressions, gate semantics, MCP protocol,
+goose config dialects, sentinel channel semantics (nudge fires once per
+budget, merges with recurrence notes, clean calls count toward the budget;
+the permute-gate serves until ceil(0.8·budget) then refuses forever, per
+session; the 30-day production replay must reproduce its recorded note count
+exactly), and the structured seam (cross-session counts never reach
+`to_world_dict()`; the frontier-feature attribution pattern — beats greedy
+with metadata, ties without; the vendored Hermes engine pinned byte-for-byte
+to upstream by `test_vendored_engine_matches_upstream`).
 
 ## License
 

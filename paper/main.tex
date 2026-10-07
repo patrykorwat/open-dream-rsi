@@ -27,7 +27,7 @@ Curated Knowledge Base}
 Patryk Orwat\\
 Independent Researcher\\
 \texttt{patrykorwat@gmail.com}\\[2pt]
-\small September 22, 2026
+\small October 7, 2026
 }
 \date{}
 
@@ -39,7 +39,7 @@ We present \textbf{Open Dream-RSI}, an open-source (MIT) Python library that
 implements the exploration layer of recursive self-improvement (RSI) around a
 \emph{frozen} large language model: no weight access, no GPU, no training. The
 library reproduces the discovery loop of Dream-RSI \cite{dreamrsi} and extends
-it in four directions that the paper leaves implicit. First, an
+it in five directions that the paper leaves implicit. First, an
 \emph{always-on supervisor} that self-schedules improvement cycles under an
 explicit API-call budget guard. Second, \emph{LLM-written exploration
 policies}: the loop asks the model to write candidate expansion policies as
@@ -49,26 +49,31 @@ promotes them only on evidence. Third, a \emph{knowledge curator} that distils
 verifier failures into short, schema-validated, deduplicated lesson records;
 each fresh lesson is a \emph{candidate} intervention that reaches proposal
 prompts only after a paired-behavioral-replay gate proves it turns failures
-into solves without turning solves into failures---so iterations become not
-only cheaper but measurably smarter. Fourth, \emph{thought-conditioned branching}: each
-attempt records the one-line plan the model stated before its code, the
-proposal prompt carries the task's tried-idea ledger, and expansion leaves a
-branch as soon as its recorded idea repeats itself---semantic selection
-replacing purely numeric score-greedy choice. We introduce two deterministic,
-key-free benchmarks:
-\texttt{bench}, which measures API-call savings (54\% at equal solve quality on
-the built-in suite), and \texttt{bench-policy}, a \emph{decoy-trap} suite that
-isolates exploration quality where solve-rate graphs saturate: score-greedy
-exploration solves \textbf{0/120} tasks, $\varepsilon$-greedy 24\%, replay-gated
-learned policies reach \textbf{77\%} (100\% by cycle~5) at \emph{fewer} total
-calls than $\varepsilon$ spends on luck, the curated
-knowledge base alone---with zero policy-generation calls---reaches 73\%, and
-thought-guided branching reaches \textbf{100\% from the first cycle}
-at 1.37 calls per solve even with exploration randomness disabled. All headline numbers are produced by a scripted solver and are therefore
-claims about the \emph{machinery} (gates, sandboxes, promotion, retrieval),
-not about any particular model; we state this limitation explicitly.
-The package has zero runtime dependencies, ${\sim}6$k lines of library code,
-${\sim}2.5$k lines of tests (210 passing), a live dashboard, and a single CLI.
+into solves without turning solves into failures. Fourth,
+\emph{thought-conditioned branching}: each attempt records the one-line plan
+the model stated before its code, the proposal prompt carries the task's
+tried-idea ledger, and expansion leaves a branch as soon as its recorded idea
+repeats itself---semantic selection replacing purely numeric score-greedy
+choice. Fifth, a \emph{structured Sentinel seam}: the error-class sentinel
+that annotates tool results in deployment becomes part of the world model
+itself---observations enter discovery-tree nodes in a replay-safe form
+(cross-session counters stripped by construction) and the reason an episode
+stopped (\emph{declined} vs.\ \emph{option removed}) is recorded as data, so
+counterfactual replay can tell them apart.
+We make performance claims on exactly \textbf{one benchmark}: goose
+$\times$ \emph{TravelPlanner} (public, scored by the benchmark's own
+evaluators), where a choice-removal gate lifts preregistered eval-split plan
+delivery from 23\% to 94\% and final pass rate from 7.6\% to 21.5\%
+(exact McNemar $p{=}1.4{\times}10^{-17}$), with all 91 undelivered cold
+episodes shown to die at the harness call cap. Everything else in the
+project---\texttt{bench} (54\% API-call saving at equal solve quality) and
+\texttt{bench-policy} (a decoy-trap suite where score-greedy exploration
+solves \textbf{0/120} and replay-gated policies reach 77\%)---is stated as a
+deterministic \emph{machinery self-check}, a regression contract for gates,
+sandboxes and promotion logic, not a model-quality claim; we state this
+distinction explicitly. The package has zero runtime dependencies,
+${\sim}6.4$k lines of library code, ${\sim}3.1$k lines of tests (244
+passing), a live dashboard, and a single CLI.
 \end{abstract}
 
 \vspace{0.5em}
@@ -98,7 +103,7 @@ tool: a researcher with an OpenAI-compatible endpoint should be able to
 \texttt{pip}-install the loop, point it at their tasks and model, and get a
 self-improving search that is (a)~budget-safe, (b)~safe to run code the model
 writes, and (c)~capable of getting \emph{better}, not merely cheaper. We make
-four contributions beyond the published method description:
+five contributions beyond the published method description:
 
 \begin{enumerate}
   \item \hdr{Always-on supervisor with a hard budget guard.}
@@ -123,22 +128,38 @@ four contributions beyond the published method description:
   proposal prompts carry the task's tried-idea ledger, and expansion abandons
   a branch as soon as its recorded idea repeats itself---semantic selection
   replacing purely numeric score-greedy choice (\S\ref{sec:thoughts}).
+  \item \hdr{The Sentinel as a world-model layer.}
+  The error-class sentinel that annotates failing tool calls in deployment
+  (\S\ref{sec:sentinel}) stops being only a prompt channel: structured
+  observations enter discovery-tree nodes through a replay-safe contract, and
+  each episode records \emph{why} it terminated---the decision-maker
+  declining to continue versus the runtime removing the option---so
+  counterfactual replay can distinguish the two, and LLM-written policies can
+  read error-class recurrence as primitive frontier features
+  (\S\ref{sec:sentinel-seam}).
 \end{enumerate}
 
-Two deterministic, key-free benchmarks back the claims (\S\ref{sec:bench}):
-\texttt{bench} measures cost; \texttt{bench-policy} measures exploration on a
-purpose-built decoy-trap suite, because on easy suites every strategy solves
-everything and solve-rate graphs are blind to policy quality.
+Evaluation policy: this paper makes performance claims on exactly
+\textbf{one benchmark} --- goose $\times$ TravelPlanner, public and scored by
+the benchmark's own evaluators (\S\ref{sec:tp}) --- under a protocol frozen
+before the eval pass. The deterministic, key-free suites
+\texttt{bench} and \texttt{bench-policy} (\S\ref{sec:bench}) are
+\emph{machinery self-checks}: a scripted solver makes the model arm a
+constant, so their numbers are regression contracts over the library's own
+gates, sandboxes, promotion and retrieval logic, and are never presented as
+model-quality evidence.
 
 \section{System architecture}
 
-The package is $\sim$5k lines of pure-Python with no runtime dependencies
-(standard library only, including the LLM client) and ${\sim}2$k lines of tests.
+The package is ${\sim}6.4$k lines of pure-Python with no runtime dependencies
+(standard library only, including the LLM client) and ${\sim}3.1$k lines of tests.
 Modules:
 
 \begin{itemize}
   \item \texttt{core.tree} --- discovery tree: hypothesis, verifier score,
-  action history per node.
+  action history, and (when a Sentinel engine is wired) structured
+  error-class facts and the episode's termination reason per node
+  (\S\ref{sec:sentinel-seam}).
   \item \texttt{core.agent} --- thin LLM-agent abstraction steered by the
   currently promoted policy.
   \item \texttt{core.simulator} / \texttt{core.dreamer} --- offline dreaming:
@@ -149,6 +170,8 @@ Modules:
   (\S\ref{sec:policy}).
   \item \texttt{core.curator} --- lesson distillation, validation, retrieval,
   pruning (\S\ref{sec:curator}).
+  \item \texttt{sentinel} --- host-agnostic error-class engine plus the
+  \texttt{SentinelObservation} world contract (\S\ref{sec:sentinel}).
   \item \texttt{memory} --- persistent cross-run store: verified-solution
   recipes, promoted policies, \texttt{lessons.json}.
   \item \texttt{loop} --- \texttt{AutoRSIRuntime}: scheduling, budget guard,
@@ -458,12 +481,122 @@ every other arm must climb. Selection therefore stops being purely numeric
 on evidence: the loop knows \emph{which idea} a branch stands for, and
 abandons it when the record says the idea is dead.
 
-\section{Benchmarks}
+\section{The error-class Sentinel and its world-model seam}
+\label{sec:sentinel}
+
+Curation above is bounded by the episode: it reads outcomes after episodes
+end and wakes on a schedule. Measured on a production agent's session store
+(30 days; anonymized replay fixture \texttt{fixtures/sentinel\_audit.json}),
+a recurring error class re-appears \emph{within} one session at a median gap
+of 4.3 minutes and \emph{half} of all failing tool calls repeat a class the
+same session already suffered (Figure~\ref{fig:race}). No schedule wins that
+race, so the reactive half of the problem lives in the tool-execution layer.
+
+\hdr{The engine.} \texttt{sentinel.py} is host-independent:
+\texttt{classify} recognises failures from status or payload;
+\texttt{normalize} strips URLs, paths, numbers and hex so that calls
+differing only by argument collapse to one \emph{error class}; a SHA-1
+signature keys the ledger. \texttt{SentinelEngine.observe()} counts
+recurrences per class per session and across sessions and emits at most one
+note per class per session --- \emph{declarative} text (recurrence facts
+plus an explicit stop condition, never a command; the replay arms of
+\S\ref{sec:curator} showed imperative framing measurably extends loops).
+Clean calls pay zero prompt tax: the note rides only failing results. The
+same engine also carries a budget-pressure channel (\emph{finalize nudge}:
+counts all calls, fires once per session at $\lceil 0.8\cdot\mathit{budget}
+\rceil$, rides an ordinary tool result, never a blocking hook). Adapters
+ship for Hermes, Claude Code hooks, goose's \texttt{Stop} event, and any
+command-hook host via a stdin-JSON CLI; the Hermes plugin's engine copy is
+byte-pinned to upstream by a test. A separate enforcement primitive ---
+the \emph{permute-gate} --- lives on the MCP sandbox server
+(\texttt{SENTINEL\_GATE\_BUDGET}/\texttt{SENTINEL\_GATE\_AT}): past the
+threshold every further sandbox call returns \texttt{isError} with a
+data-in-hand instruction and all persuasion channels go silent. Its
+semantics are pinned by a no-model smoke test (JSON-RPC into the server:
+serves exactly up to the threshold, refuses every call after), and its net
+effect is the measured headline of \S\ref{sec:tp} --- choice removal, not
+persuasion.
+
+\subsection{The seam: Sentinel facts as world state}
+\label{sec:sentinel-seam}
+
+The deployment sentinel above speaks prose to hosts. Inside the library a
+second, data-only contract makes the same engine part of the evolving world
+without any change to the frozen model:
+
+\begin{itemize}
+  \item \hdr{\texttt{SentinelObservation}.}
+  \texttt{observe\_structured()} returns a frozen dataclass --- signature,
+  normalized error class, in-session and cross-session counts, recurring,
+  nudge-fired, budget fraction, blocked --- instead of rendered text.
+  \texttt{observe()} remains a \emph{rendering} of the same facts on the
+  same ledger, so the host-facing text contract is unchanged and byte-pinned
+  by the production replay fixture.
+  \item \hdr{Replay-safe admission.} \texttt{to\_world\_dict()} is the only
+  view permitted into \texttt{TreeNode.sentinel}: signature,
+  episode-local \texttt{repeat\_world}, \texttt{recurring},
+  \texttt{blocked}, budget fraction. Cross-session counters are
+  \emph{stripped by construction} --- a recurrence fact from another
+  (possibly future) session entering the historical world would falsify the
+  prefix-only replay invariant that protects the section-3 gate. A test
+  feeds a malformed node carrying \texttt{cross\_session\_count} and asserts
+  it still cannot reach replay.
+  \item \hdr{Termination as data.} \texttt{TreeNode.termination\_reason}
+  records a closed enumeration --- \texttt{completed},
+  \texttt{policy\_stop}, \texttt{tool\_failure}, \texttt{budget\_gate},
+  \texttt{sentinel\_block}, \texttt{unknown} --- on the node where an
+  episode stopped. Counterfactual replay can now distinguish
+  \emph{the decision-maker declined to continue} from \emph{the runtime
+  removed the option} --- the distinction whose absence defined the
+  TravelPlanner cold-arm anatomy (91/91 undelivered episodes at the cap;
+  \S\ref{sec:tp}), and which a score-only tree cannot express.
+  \item \hdr{Frontier features.} The serialized frontier entry --- shared
+  by online expansion and replay rollout, so both see identical fields ---
+  exposes \texttt{sentinel\_signature}, \texttt{sentinel\_repeat},
+  \texttt{sentinel\_blocked} to LLM-written policies, with
+  clean-and-unblocked defaults for metadata-free nodes: an ON/OFF ablation
+  changes \emph{values, not interface}, cold arms pay nothing, and legacy
+  archived trees remain consumable.
+\end{itemize}
+
+\hdr{Causal attribution and cost of admission.} The wiring is opt-in
+(\texttt{AutoRSIRuntime(sentinel\_engine=...)}); the default leaves
+archived trees byte-identical. The attribution test pattern pins the claim:
+the \emph{same} policy code that reads \texttt{sentinel\_blocked} beats
+greedy on a tree containing a blocked trap and \textbf{ties} greedy on the
+identical tree without metadata --- the delta is the feature, not the code.
+With the seam merged, both self-check suites reproduce their published
+tables unchanged (\S\ref{sec:bench}): greedy and $\varepsilon$ never read
+the new fields, so published arm numbers are stable by construction. No
+live-model uplift claim is made for the seam itself; the uplift it is
+designed to enable (a policy that abandons a blocked branch in replay) is
+stated as future work in \S\ref{sec:limits}.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{fig_race.png}
+\caption{The reaction-time race, measured on a production agent's session
+store (30 days; within-session gaps between consecutive failures of the
+same normalized error class, n=1972, log scale). Half of all failing
+tool calls repeat a class the same session already suffered. A curator
+that acts at episode end --- any curator, in any host --- cannot see a
+signal that fires a median of 4.3 minutes into the same session; a weekly
+curator is roughly three orders of magnitude slower still. A minute-scale
+reactive tick --- the design we shipped into the host's own curator ---
+sees 90.7\% of repeats, but only the
+in-tool sentinel beats the fastest half of them.}
+\label{fig:race}
+\end{figure}
+
+\section{Machinery self-checks}
 \label{sec:bench}
 
-Both benchmarks are deterministic and key-free: a scripted solver makes the
-model arm a constant, so every delta is attributable to the library's
-machinery. They are reproducible from a fresh clone in seconds:
+These suites are \emph{not} benchmarks in the claim-bearing sense of
+\S\ref{sec:tp}: they are deterministic and key-free regression contracts in
+which a scripted solver makes the model arm a constant, so every delta is
+attributable to the library's machinery. They exist so a broken gate,
+sandbox or promotion path fails locally in seconds rather than silently
+mutating a published number. They re-run from a fresh clone in seconds:
 
 \begin{verbatim}
 python -m open_dream_rsi bench --cycles 10 --markdown
@@ -546,9 +679,13 @@ every set.
 The thought arm reaches 120/120 on every one of the five seed sets, staying
 above the other machinery arms on every set.
 
-\subsection{Cross-agent replication (goose)}
+\subsection{Cross-agent replication studies (goose; mechanism and negative evidence)}
 \label{sec:goose}
 
+Unlike the scripted self-checks above, the two studies in this subsection use
+the real model; both are reported as mechanism/negative evidence, and neither
+carries a performance claim --- those live in the single benchmark of
+\S\ref{sec:tp}.
 To test whether the sentinel's value is a property of the \emph{mechanism}
 rather than of our host integration, we re-ran the identical 20-task,
 identical-scoring study inside a different agent: \texttt{goose}
@@ -608,11 +745,12 @@ in the prompting, not in the notes.}
 \label{fig:goose}
 \end{figure}
 
-\subsection{Public-benchmark performance: goose $\times$ TravelPlanner}
+\section{Evaluation: goose $\times$ TravelPlanner --- the only benchmark}
 \label{sec:tp}
 
 To measure the sentinel's \emph{net effect on task outcomes} --- not just its
-zero-tax property --- we put the agent on a public, externally-scored
+zero-tax property, and not on a suite of our own design --- we put the agent
+on a public, externally-scored
 benchmark: \texttt{osunlp/TravelPlanner}, served offline through our stdlib
 MCP sandbox (6 tools, deterministic database), scored by the benchmark's own
 commonsense and hard-constraint evaluators (nothing in the scoring path is
@@ -689,14 +827,18 @@ data: \texttt{fixtures/tp\_v3\_summary.json}.}
 
 \subsection{Test suite}
 
-226 tests + 10 subtests pass (5{,}757 non-blank LOC in the shipped library), including the benchmark's behavioural
+244 tests + 10 subtests pass (${\sim}3.1$k non-blank LOC in the tests), including the self-checks' behavioural
 contracts:
 trap-family scores equal their constructed values; the greedy arm must solve
 nothing; the gated-policy arm must dominate $\varepsilon$; the replay rollout
 must be prefix-only (no future score may reach a present choice,
 \S\ref{sec:policy}); the dreaming objective must respond causally to both
 policy parameters; curator schema,
-caps, dedup, and prune logic are pinned by unit tests.
+caps, dedup, and prune logic are pinned by unit tests; the Sentinel seam
+pins that cross-session counts cannot reach replay, that the permute-gate
+serves until $\lceil 0.8\cdot\mathit{budget}\rceil$ and refuses forever
+after, and that the frontier-feature delta is the feature and not the code
+(\S\ref{sec:sentinel-seam}).
 
 \section{Related work and positioning}
 \label{sec:related}
@@ -714,8 +856,8 @@ method this library implements; the official repository is
 \url{https://github.com/zhengkid/Dream-RSI}. Our contribution is at the
 library/infrastructure level within this family: the mechanisms above are
 proven at scale by their authors; we ship the same loop pattern as a
-dependency-free, budget-guarded, OpenAI-compatible tool and add the curator
-and the exploration-isolating benchmark.
+dependency-free, budget-guarded, OpenAI-compatible tool and add the curator,
+the Sentinel world seam, and deterministic machinery self-checks.
 
 \hdr{Memory and self-generated policies in agents.} Reflexion
 \cite{reflexion} shows that verbal self-feedback stored in an episodic memory
@@ -730,10 +872,12 @@ strict replay and evidence-based promotion gates \cite{drsdk}, a local-Qwen
 CUDA-kernel exploration on DGX Spark \cite{dspark}, and agent/skill variants
 \cite{hermesdrsi}. Against peers, this library differentiates on: the
 always-on budget-guarded supervisor; LLM-\emph{written} policy code (as
-opposed to a fixed policy menu) with counterfactual-replay promotion; a
-dedicated exploration benchmark (\texttt{bench-policy}); a curated lesson
-knowledge base with retrieval feedback; persistent cross-run memory; a live
-dashboard; zero dependencies; MIT license.
+opposed to a fixed policy menu) with counterfactual-replay promotion; the
+Sentinel world seam (error-class facts and termination causes as replay-safe
+world state); an externally-scored public-benchmark measurement rather than
+self-scored claims; deterministic self-checks labelled as such; a curated
+lesson knowledge base with retrieval feedback; persistent cross-run memory; a
+live dashboard; zero dependencies; MIT license.
 
 \hdr{A different layer.} OpenRSI/OpenMLE/Frontis-MA1 \cite{openrsi,
 mlebench} post-train weights (SFT+RL, a 35B meta-evolution agent on
@@ -746,25 +890,33 @@ their search.
 
 We state plainly what the numbers do and do not show.
 \begin{enumerate}
-  \item \hdr{Scripted worlds, not model quality.} Every headline number comes
-  from deterministic benchmarks with a scripted solver; the trap scores are
+  \item \hdr{Self-check worlds, not model quality.} Every
+  \texttt{bench}/\texttt{bench-policy} number comes from a deterministic
+  suite with a scripted solver; the trap scores are
   fixed by construction, the scripted solver treats a stored lesson text as a
   genuine insight when it is visible in the prompt, and the ``policy''
-  returned by the scripted model is a canned program. The benchmarks
+  returned by the scripted model is a canned program. The self-checks
   therefore validate the \emph{machinery}---sandboxes, gates, promotion,
   retrieval, budget---and prove the arms differ \emph{causally} through
-  memory, not that any live model writes good lessons or policies. A
+  memory, not that any live model writes good lessons or policies; they are
+  reported as regression contracts and the single external benchmark
+  (\S\ref{sec:tp}) is where live-model evidence lives. A
   live-model replay (production task family, greedy-decoding 8B model) has
   been run for the knowledge arm specifically and is reported in
   \S\ref{sec:curator}: it \emph{falsified} the trust-based admission of
   lessons and motivated the behavioral promotion gate; a comparable
   live-model study of learned \emph{policies} remains the required next
-  experiment.
-  \item \hdr{Benchmark self-design risk.} The decoy-trap suite was designed by
-  the same author as the loop it measures. Mitigations: family scores fixed
-  and asserted by construction; arm contracts enforced by tests (greedy must
+  experiment --- including whether a policy actually exploits the Sentinel
+  frontier features (\S\ref{sec:sentinel-seam}), which today ship tested
+  but without an uplift claim.
+  \item \hdr{Benchmark self-design risk --- and its boundary.} The
+  decoy-trap self-check was designed by the same author as the loop it
+  measures; mitigations: family scores fixed and asserted by construction;
+  arm contracts enforced by tests (greedy must
   fail, arms must differ causally); determinism lets anyone re-measure with
-  one command; five seed sets reported.
+  one command; five seed sets reported. This risk is why the only
+  performance claim in this paper runs on a third-party benchmark with
+  third-party evaluators (\S\ref{sec:tp}).
   \item \hdr{Single-node sandbox.} \texttt{python -I} with scrubbed environment,
   resource limits, and group-killing timeout is a real boundary against casual
   escape but is not a container: it does not restrict filesystem or network
@@ -780,25 +932,33 @@ We state plainly what the numbers do and do not show.
 \section{Conclusion}
 
 Open Dream-RSI turns the Dream-RSI method into a deployable, budget-safe,
-dependency-free library and adds the two mechanisms a running loop actually
-needs to compound---evidence-gated learned policies and a curated,
-self-pruning knowledge base---each backed by a deterministic benchmark that
-isolates exactly the capability it claims. At library scale: 54\% fewer API
-calls at equal solve quality; on a suite where greedy exploration solves
-nothing, replay-gated policies reach 77\% and remembered knowledge 73\%
-cumulative (100\% by cycle~5 for both) at $\sim$4$\times$ better cost-per-solve
-than random escape. All artefacts pass structural gates before touching the
-loop; the gate, not trust, decides.
+dependency-free library and adds the mechanisms a running loop actually
+needs to compound---evidence-gated learned policies, a curated,
+self-pruning knowledge base, and a Sentinel seam that turns error-class
+recurrence and termination causes into replay-safe world state. The paper's
+performance claim is deliberately narrow: on one public, externally-scored
+benchmark, replacing \emph{persuasion} of the agent with \emph{choice
+removal} at the tool layer lifted plan delivery from 23\% to 94\% and final
+pass rate from 7.6\% to 21.5\% on a preregistered eval split
+($p{=}1.4{\times}10^{-17}$), after three text channels had each converted
+zero of the episodes they triggered---termination, not verification, is the
+binding failure under budget pressure, and the world model now records that
+distinction as data (\S\ref{sec:sentinel-seam}). Everything else is
+labelled what it is: 54\% fewer API calls at equal solve quality and, on a
+suite where greedy exploration solves nothing, 77\% from replay-gated
+policies and 73\% from remembered knowledge---deterministic machinery
+self-checks, not model-quality claims. All artefacts pass structural gates
+before touching the loop; the gate, not trust, decides.
 
-
-One corollary of the hazard analysis is
-architectural: curation is bounded by the episode boundary --- measured on a
-production session store (30 days, 4914 error events across 459 classes;
-anonymized replay fixture shipped in \texttt{fixtures/}), a recurring error
-class re-appears within the same session after a median gap of 4.3 minutes
-(p25 0.6, p90 56.4; 58\% of repeats under 7 minutes), and \emph{half} of all
-failing tool calls are repeats of a class the same session had already
-suffered. No schedule wakes that fast (Figure~\ref{fig:race}). The shipped answer therefore splits
+One corollary of the hazard analysis is architectural and was measured
+before the seam existed: curation is bounded by the episode boundary ---
+on a production session store (30 days, 4914 error events across 459
+classes; anonymized replay fixture shipped in \texttt{fixtures/}), a
+recurring error class re-appears within the same session after a median gap
+of 4.3 minutes (p25 0.6, p90 56.4; 58\% of repeats under 7 minutes), and
+\emph{half} of all failing tool calls are repeats of a class the same
+session had already suffered (Figure~\ref{fig:race}). No schedule wakes
+that fast. The shipped answer therefore splits
 the problem: cross-session knowledge stays in the gated, headroom-aware
 curator above, while sub-episode reaction is handled mechanically in the
 tool-execution layer (the host-agnostic error-class sentinel in
@@ -814,22 +974,6 @@ loop measures its own categories' economics and stops paying curator and
 gate calls where the baseline already solves cheaply. Optimizing the host's
 own memory machinery is therefore not aspirational: it is what the shipped
 code does on the machine where these numbers were collected.
-
-\begin{figure}[h]
-\centering
-\includegraphics[width=\linewidth]{fig_race.png}
-\caption{The reaction-time race, measured on a production agent's session
-store (30 days; within-session gaps between consecutive failures of the
-same normalized error class, n=1972, log scale). Half of all failing
-tool calls repeat a class the same session already suffered. A curator
-that acts at episode end --- any curator, in any host --- cannot see a
-signal that fires a median of 4.3 minutes into the same session; a weekly
-curator is roughly three orders of magnitude slower still. A minute-scale
-reactive tick --- the design we shipped into the host's own curator ---
-sees 90.7\% of repeats, but only the
-in-tool sentinel beats the fastest half of them.}
-\label{fig:race}
-\end{figure}
 
 \begin{thebibliography}{99}
 \bibitem{dreamrsi} Zheng et al., \emph{Dream-RSI: Recursive
