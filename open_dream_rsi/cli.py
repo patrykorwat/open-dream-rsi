@@ -179,6 +179,44 @@ def cmd_sessions(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_lessons(args: argparse.Namespace) -> int:
+    """Git-backed lesson stores: publish active lessons, import others'
+    knowledge as staging (see README 'Sharing lessons')."""
+    from open_dream_rsi.share import (LessonShareError, export_lessons,
+                                      import_lessons, store_status)
+
+    memory = DreamMemory(args.memory)
+    try:
+        if args.lessons_cmd == "export":
+            st = export_lessons(memory, args.store, categories=args.category,
+                                 message=args.message, push=not args.no_push)
+        elif args.lessons_cmd == "import":
+            counts = import_lessons(args.store, memory,
+                                    categories=args.category)
+            if not counts:
+                print("[odr] nothing imported (empty/filtered store)")
+                return 0
+            for cat, n in sorted(counts.items()):
+                print(f"[odr] {cat}: +{n} staging lesson(s) — activate via "
+                      f"the paired-replay gate (odr loop)")
+            return 0
+        else:  # status
+            st = store_status(args.store)
+    except LessonShareError as exc:
+        print(f"[odr] store error: {exc}", file=sys.stderr)
+        return 1
+    if getattr(args, "json", False):
+        print(json.dumps(st.to_dict(), indent=2, ensure_ascii=False))
+    else:
+        print(f"[odr] store: {st.location} "
+              f"({'git' if st.git else 'plain dir'}, ok={st.ok})")
+        for cat, n in sorted(st.categories.items()):
+            print(f"  {cat}: {n} lesson(s)")
+        for e in st.errors:
+            print(f"  ! {e}")
+    return 0 if st.ok else 1
+
+
 def cmd_skills(args: argparse.Namespace) -> int:
     """Render the curated lesson KB into Hermes-style skills (issue #3
     boundary: only lessons that EARNED activation become a prompt)."""
@@ -331,6 +369,35 @@ def main(argv: list[str] | None = None) -> int:
                      help="export staging lessons too (not recommended: "
                           "staging has not earned a prompt)")
     skx.set_defaults(func=cmd_skills)
+
+    ls = sub.add_parser(
+        "lessons",
+        help="git-backed lesson stores — publish active lessons to a repo, "
+             "import others' knowledge as staging (schema odr-lessons/v1)")
+    ls_sub = ls.add_subparsers(dest="lessons_cmd", required=True)
+
+    lexp = ls_sub.add_parser("export", help="write active lessons into a store")
+    lexp.add_argument("--store", required=True,
+                      help="local dir or git URL (cloned/pulled under "
+                           "<memory>/lesson_stores/)")
+    lexp.add_argument("--category", action="append", default=None,
+                      help="limit to these categories (repeatable)")
+    lexp.add_argument("--message", default=None, help="git commit message")
+    lexp.add_argument("--no-push", action="store_true",
+                      help="commit locally but do not push")
+    lexp.set_defaults(func=cmd_lessons)
+
+    limp = ls_sub.add_parser("import",
+                             help="merge a store's lessons into the KB as staging")
+    limp.add_argument("--store", required=True,
+                      help="local dir or git URL")
+    limp.add_argument("--category", action="append", default=None)
+    limp.set_defaults(func=cmd_lessons)
+
+    lst = ls_sub.add_parser("status", help="verify manifest + checksums")
+    lst.add_argument("--store", required=True)
+    lst.add_argument("--json", action="store_true")
+    lst.set_defaults(func=cmd_lessons)
 
     dash = sub.add_parser("dashboard", help="serve the live web dashboard")
     dash.add_argument("--host", default="0.0.0.0",

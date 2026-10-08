@@ -566,6 +566,71 @@ not the skills. Staging and rejected lessons are excluded by construction;
 The reverse direction (Hermes → ODR) is the session import above: Hermes
 sessions become evidence, never directly-active knowledge.
 
+### Sharing lessons: git-backed stores
+
+`share.py` turns curated knowledge into a **portable, verifiable store**
+that other instances (or other people) can consume — the publishing
+mechanism the curator layer deliberately never had. A store is a directory
+of JSON files, optionally a git checkout, so GitHub is just storage:
+
+```
+.dream_rsi/lessons.json  (private runtime view)
+      │  export: ACTIVE lessons only · secrets redacted · sha256 manifest
+      ▼
+<store>/manifest.json                 schema "odr-lessons/v1"
+<store>/lessons/<category>.json       portable records + provenance
+      ▲  import: checksum verified → structural gate → STAGING
+      │
+any other .dream_rsi instance / repo / fork
+```
+
+Publish your curated knowledge to a repo, then anyone pulls it:
+
+```bash
+# one-time: point the store at a repo (clone/pull handled for you,
+# cached under <memory>/lesson_stores/)
+python -m open_dream_rsi --memory .dream_rsi lessons export \
+    --store git@github.com:you/dream-rsi-lessons.git
+
+# later exports pull, commit and push incrementally
+python -m open_dream_rsi --memory .dream_rsi lessons export \
+    --store git@github.com:you/dream-rsi-lessons.git \
+    --message "promotions from oct-week-2"
+
+# on the consumer side — someone else's store becomes your staging:
+python -m open_dream_rsi --memory .dream_rsi lessons import \
+    --store https://github.com/you/dream-rsi-lessons.git
+
+python -m open_dream_rsi --memory .dream_rsi lessons status \
+    --store <dir-or-url>          # manifest + checksum verification
+```
+
+A local directory works identically (`--store ./store`), so the mechanism
+is not GitHub-specific — git is just the transport. `--no-push` commits
+locally for review before publishing; `--category` filters both directions.
+
+Trust model — identical to the session import, because a shared lesson is
+the same kind of object:
+
+* **Export ships only what earned activation.** Staging and rejected
+  lessons are excluded by construction; internal bookkeeping (keys,
+  digests, statuses) never leaves the instance. Every record carries
+  provenance (`promoted_by: paired_replay_gate`).
+* **Import lands as staging, never active.** Each lesson passes the
+  structural gate, registers `CANDIDATE → VALIDATED` in the ALM, and
+  still needs *your* paired-replay gate to reach a prompt. Importing
+  someone's store shares their knowledge, not their authority.
+* **Tampering is detected, not trusted.** `manifest.json` records the
+  sha256 of every file; a mismatch aborts the whole import. `lessons
+  status` verifies the same checksums read-only.
+* **Secrets are scrubbed before anything is published** — the same
+  redactor the session export uses (review before pushing anyway).
+
+Git identity for the auto-commit comes from `ODR_GIT_AUTHOR_NAME` /
+`ODR_GIT_AUTHOR_EMAIL` (defaults `open-dream-rsi` /
+`odr@users.noreply.github.com`); push auth is whatever your git already
+uses — the code never handles credentials.
+
 ### Full Hermes wiring (what exists today)
 
 | Path | Direction | What it does |
