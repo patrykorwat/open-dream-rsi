@@ -457,6 +457,127 @@ operating on historical trees without mutation. Inspect the store with
 
 ---
 
+## Importing real sessions: Hermes and Cursor (curator's second door)
+
+The loop distils lessons from failures it produces itself. `sessions.py`
+opens the second legitimate door: **transcripts from host agents are
+evidence you already paid for**. Imports feed the *same* pipeline as
+loop-collected failures — structural gate, staging-by-default, paired
+replay promotion. Nothing imported is trusted; activation is still earned.
+
+```
+Hermes state.db  ─┐                                    ┌─> lessons.json
+                  ├─> episodes.jsonl ─> odr sessions    │    (staging)
+Cursor state.vscdb┘        (redacted)     distill ─────┘         │
+                                                                 ▼
+                              odr loop (paired-replay gate) → ACTIVE
+                                                                 │
+                              odr skills export ─> Hermes SKILL.md
+```
+
+Two rules make this safe: transcripts are **hostile input** (opened
+read-only, credential-scrubbed, schema parsed defensively), and lessons
+that never passed the promotion gate **never reach a prompt** — neither a
+proposal prompt nor a generated SKILL.md (a skill IS a prompt, and the
+v5–v9 measurements say unearned prompts cost solve-rate).
+
+### From Hermes sessions
+
+Hermes persists every session to `<HERMES_HOME>/state.db` (SQLite:
+`sessions` + `messages`). Export, then distil:
+
+```bash
+python -m open_dream_rsi --memory .dream_rsi sessions export \
+    --source hermes --db ~/.hermes/state.db --limit 50 \
+    --out episodes.jsonl
+
+# inspect what WOULD be distilled — no LLM calls, no writes:
+python -m open_dream_rsi --memory .dream_rsi sessions distill \
+    episodes.jsonl --dry-run --limit 5
+
+# real run: staging lessons into the KB (per-category = episode cwd name)
+python -m open_dream_rsi --memory .dream_rsi sessions distill episodes.jsonl
+```
+
+The next `odr loop` cycle gates the staging entries against recorded probe
+episodes exactly like loop-collected ones; `odr artifacts --type lesson
+--history` shows the lifecycle events behind every activation.
+
+### From Cursor chats
+
+Cursor keeps every conversation in one SQLite file (undocumented — the
+readers here encode the layout observed in 2026, re-verify after major
+upgrades):
+
+| Platform | Cursor user dir |
+|---|---|
+| macOS | `~/Library/Application Support/Cursor/User` |
+| Linux | `~/.config/Cursor/User` |
+| Windows | `%APPDATA%\Cursor\User` |
+
+Inside it: `globalStorage/state.vscdb` holds the message bodies in
+`cursorDiskKV` (rows `composerData:<id>` = headers whose
+`fullConversationHeadersOnly` gives bubble ORDER; `bubbleId:<cid>:<bid>` =
+one message each, `type 1` user / `2` assistant, empty `text` = tool-only),
+while `workspaceStorage/<hash>/state.vscdb` + `workspace.json` map chats to
+project folders (the reader joins them for the `cwd`).
+
+```bash
+# read-only export (works while Cursor runs; see the WAL note below)
+python -m open_dream_rsi --memory .dream_rsi sessions export \
+    --source cursor --out episodes.jsonl --limit 100
+
+python -m open_dream_rsi --memory .dream_rsi sessions distill episodes.jsonl
+```
+
+Notes:
+
+* **WAL:** the live DB is write-ahead-logged; `immutable=1` reads the
+  committed state, which may miss the newest chats. For a complete
+  snapshot, quit Cursor or copy the three files together and point at the
+  copy: `cp state.vscdb state.vscdb-wal state.vscdb-shm /tmp/c/ &&
+  ... sessions export --source cursor --db /tmp/c/state.vscdb`.
+* **Secrets:** chat history contains everything ever pasted into it.
+  Export redacts credential-shaped substrings by default; `--no-redact`
+  exists only if you are processing locally and want the raw text. Review
+  `episodes.jsonl` before sharing it — redaction is best-effort, not a
+  guarantee.
+* **Ordering:** bubbles are fetched by header order, not key order — out
+  of order, a tool call attaches to the wrong prompt and the distilled
+  "lesson" describes a world that never happened.
+
+### Curator lessons as Hermes skills
+
+`odr skills export` renders the **active** (promotion-gated) lessons into
+Hermes-style skills — one directory per category:
+
+```bash
+python -m open_dream_rsi --memory .dream_rsi skills export \
+    --out ~/.hermes/skills/odr-curated
+```
+
+Each `SKILL.md` carries frontmatter Hermes discovers automatically and
+declarative bullets (`[trigger] text`) — never imperative commands (the
+measured hazard). Re-run after promotion passes; the export is one-way and
+regenerated wholesale, so edit `lessons.json` (or better: distil again),
+not the skills. Staging and rejected lessons are excluded by construction;
+`--include-staging` exists for audits, not for prompts.
+
+The reverse direction (Hermes → ODR) is the session import above: Hermes
+sessions become evidence, never directly-active knowledge.
+
+### Full Hermes wiring (what exists today)
+
+| Path | Direction | What it does |
+|---|---|---|
+| `odr mcp` (stdio) / `--http` | Hermes → ODR | Hermes calls `odr_run_once` / `odr_status` as tools |
+| `plugins/hermes_sentinel/` | Hermes → ODR engine | Sentinel observes tool results, annotates, gates |
+| `odr sessions export/distill` | Hermes → curator | session history becomes staging lessons |
+| `odr skills export` | curator → Hermes | active lessons become discovered SKILL.md files |
+| `cron: odr loop --once` | offline | dreaming + gating runs out-of-band |
+
+---
+
 ## Security model
 
 Candidate code — both task solutions and policy programs — runs in a
@@ -536,6 +657,7 @@ dreamed-policy gauges per category and the learned recipe library.
 | `core.judge` | completion judge for test-less (`criteria`) tasks |
 | `loop` | `AutoRSIRuntime` — the autonomous supervisor (opt-in `sentinel_engine`) |
 | `lifecycle` | `ArtifactLifecycleManager` — state machine, event-sourced history, lineage, GC |
+| `sessions` | Hermes `state.db` / Cursor `state.vscdb` readers, redaction, lessons→skills bridge |
 | `memory` | `DreamMemory` — policies, recipes, lessons, trees, events |
 | `sandbox` | `run_isolated` — the single untrusted-code execution boundary |
 | `tools` | `CodeVerifier` — sandboxed verification of candidate solutions |

@@ -97,6 +97,109 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sessions(args: argparse.Namespace) -> int:
+    """Import host transcripts (Hermes state.db / Cursor state.vscdb) as
+    curator evidence — the offline second door for lessons (see README)."""
+    from open_dream_rsi.sessions import (
+        episode_failures,
+        load_episodes,
+        read_cursor_sessions,
+        read_hermes_sessions,
+        write_episodes,
+    )
+
+    if args.sessions_cmd == "export":
+        if args.source == "hermes":
+            eps = read_hermes_sessions(args.db or args.memory,
+                                       source=args.filter,
+                                       limit=args.limit,
+                                       redact=not args.no_redact)
+        else:
+            # --db accepts either the Cursor User dir or a state.vscdb copy
+            db_arg = args.db
+            db_file = db_arg if db_arg and Path(db_arg).suffix == ".vscdb" else None
+            eps = read_cursor_sessions(user_dir=None if db_file else db_arg,
+                                       db=db_file, limit=args.limit,
+                                       redact=not args.no_redact)
+        n = write_episodes(eps, args.out)
+        msgs = sum(len(e.messages) for e in eps)
+        print(f"[odr] exported {n} episode(s), {msgs} message(s) -> {args.out}")
+        if not args.no_redact:
+            print("[odr] secret redaction applied (best effort — see README)")
+        return 0
+
+    # distill: episodes -> staging lessons (gate-gated exactly like loop ones)
+    from open_dream_rsi.core.curator import (
+        KnowledgeCurator,
+        curate_lessons,
+        evidence_snippets,
+    )
+
+    eps = load_episodes(args.episodes)
+    if not eps:
+        print("[odr] no episodes to distil", file=sys.stderr)
+        return 1
+    memory = DreamMemory(args.memory)
+    provider = getattr(args, "provider", "openai")
+    if args.dry_run:
+        for ep in eps[: args.limit or len(eps)]:
+            fails = episode_failures(ep)
+            print(f"[{ep.source}:{ep.session_id[:12]}] {ep.title[:60]} "
+                  f"— {len(fails)} failure-shaped record(s)")
+            for f in fails[:3]:
+                print("   ", f["errors"][0][:100])
+        return 0
+    from open_dream_rsi.cli import _build_client
+    client = _build_client(provider, args.model)
+    curator = KnowledgeCurator(client)
+    total_added = 0
+    for ep in eps:
+        failures = episode_failures(ep)
+        if not failures:
+            continue
+        category = args.category or (
+            Path(ep.cwd).name if ep.cwd else ep.source)
+        distilled, err = curator.distill(category, ep.title or category,
+                                         failures, memory.get_lessons(category))
+        if err or not distilled:
+            memory.log_event("lesson_rejected", source=ep.source,
+                             session_id=ep.session_id, reason=(err or "empty")[:300])
+            continue
+        result = curate_lessons(memory.get_lessons(category), distilled,
+                                evidence=evidence_snippets(failures))
+        memory.replace_lessons(category, result.entries)
+        memory.log_event("lessons_curated", source=ep.source,
+                         session_id=ep.session_id, category=category,
+                         added=len(result.added), merged=result.merged)
+        total_added += len(result.added)
+        print(f"[odr] {category}: +{len(result.added)} staging lesson(s) "
+              f"from {ep.source}:{ep.session_id[:12]}")
+    print(f"[odr] done — {total_added} staging lesson(s); they activate only "
+          "through the paired-replay gate (odr loop) — never before")
+    return 0
+
+
+def cmd_skills(args: argparse.Namespace) -> int:
+    """Render the curated lesson KB into Hermes-style skills (issue #3
+    boundary: only lessons that EARNED activation become a prompt)."""
+    from open_dream_rsi.sessions import lessons_to_skills
+
+    memory = DreamMemory(args.memory)
+    written = lessons_to_skills(
+        memory, args.out,
+        categories=args.category,
+        only_active=not args.include_staging)
+    if not written:
+        print("[odr] no active lessons to export "
+              "(staging lessons activate only through the paired-replay gate)")
+        return 0
+    for p in written:
+        print(f"[odr] wrote {p}")
+    print(f"[odr] {len(written)} skill(s) — point Hermes at the parent dir "
+          "(skills auto-discovery) or copy into ~/.hermes/skills/")
+    return 0
+
+
 def cmd_artifacts(args: argparse.Namespace) -> int:
     """Inspect the Artifact Lifecycle Manager store (issue #3)."""
     from open_dream_rsi.lifecycle import ArtifactLifecycleManager
@@ -177,6 +280,57 @@ def main(argv: list[str] | None = None) -> int:
                      help="print each artifact's transition history")
     art.add_argument("--json", action="store_true", help="machine-readable output")
     art.set_defaults(func=cmd_artifacts)
+
+    sess = sub.add_parser(
+        "sessions",
+        help="import host transcripts (Hermes state.db / Cursor state.vscdb) "
+             "as curator evidence — export to JSONL, then distill into "
+             "staging lessons (promotion gate still decides activation)")
+    sess_sub = sess.add_subparsers(dest="sessions_cmd", required=True)
+
+    exp = sess_sub.add_parser("export", help="read a host store, write episodes.jsonl")
+    exp.add_argument("--source", required=True, choices=["hermes", "cursor"])
+    exp.add_argument("--db", default=None,
+                     help="path to state.db (hermes) or Cursor User dir "
+                          "(default: platform Cursor location)")
+    exp.add_argument("--filter", default=None,
+                     help="hermes only: session source filter (e.g. cli, desktop)")
+    exp.add_argument("--limit", type=int, default=None)
+    exp.add_argument("--out", required=True, help="output episodes JSONL path")
+    exp.add_argument("--no-redact", action="store_true",
+                     help="DISABLE secret redaction (not recommended — chat "
+                          "history contains pasted credentials)")
+    exp.set_defaults(func=cmd_sessions)
+
+    dis = sess_sub.add_parser("distill",
+                              help="distil exported episodes into staging lessons")
+    dis.add_argument("episodes", help="episodes JSONL from 'sessions export'")
+    dis.add_argument("--category", default=None,
+                     help="KB category (default: cwd name of each episode)")
+    dis.add_argument("--provider", default="openai",
+                     choices=["openai", "cursor", "local", "goose"])
+    dis.add_argument("--model", default=None)
+    dis.add_argument("--limit", type=int, default=None)
+    dis.add_argument("--dry-run", action="store_true",
+                     help="show failure-shaped records, no LLM call")
+    dis.set_defaults(func=cmd_sessions)
+
+    sk = sub.add_parser(
+        "skills",
+        help="bridge the curated lesson KB and Hermes skills")
+    sk_sub = sk.add_subparsers(dest="skills_cmd", required=True)
+    skx = sk_sub.add_parser(
+        "export",
+        help="render active lessons into Hermes-style skills "
+             "(<out>/<category>/SKILL.md)")
+    skx.add_argument("--out", required=True,
+                     help="target skills dir (e.g. ~/.hermes/skills/odr-curated)")
+    skx.add_argument("--category", action="append", default=None,
+                     help="limit to these categories (repeatable)")
+    skx.add_argument("--include-staging", action="store_true",
+                     help="export staging lessons too (not recommended: "
+                          "staging has not earned a prompt)")
+    skx.set_defaults(func=cmd_skills)
 
     dash = sub.add_parser("dashboard", help="serve the live web dashboard")
     dash.add_argument("--host", default="0.0.0.0",
