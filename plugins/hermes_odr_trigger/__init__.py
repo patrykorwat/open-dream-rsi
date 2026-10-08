@@ -67,10 +67,9 @@ def _resolve() -> Dict[str, Any]:
 def on_session_end(**kw) -> None:
     try:
         now = time.time()
-        try:
-            if _CTX is not None:
-                _CTX.logger.info("odr-trigger: session-end hook fired (%s)",
-                                 kw.get("session_id", "?"))
+        try:  # delivery probe: proves the hook runs in this process
+            Path("/tmp/odr-hook-fire").write_text(
+                f"{now} {kw.get('session_id', '?')}\n")
         except Exception:
             pass
         cfg = _resolve()
