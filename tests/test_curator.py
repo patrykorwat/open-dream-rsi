@@ -70,6 +70,20 @@ class ValidationTest(unittest.TestCase):
         self.assertEqual(extract_json_array('```json\n[{"a": 1}]\n```'), [{"a": 1}])
         self.assertEqual(extract_json_array('noise [{"a": 1}] noise'), [{"a": 1}])
         self.assertIsNone(extract_json_array("no array here"))
+
+    def test_extract_json_array_salvages_truncated_reply(self):
+        # decoder rambles past its budget: keep the complete leading objects
+        truncated = ('Let me think...\n```json\n['
+                     '{"trigger": "ok", "text": "first complete lesson"}, '
+                     '{"trigger": "cut", "text": "second lesson gets tru')
+        got = extract_json_array(truncated)
+        self.assertEqual(got, [{"trigger": "ok", "text": "first complete lesson"}])
+        # braces inside strings must not fool the balancer
+        tricky = ('[{"trigger": "a}", "text": "brace } in string"}, {"trig')
+        got = extract_json_array(tricky)
+        self.assertEqual(got, [{"trigger": "a}", "text": "brace } in string"}])
+        # nothing complete yet -> still None (caller retries with feedback)
+        self.assertIsNone(extract_json_array('[{"trigger": "x", "text": "open'))
         self.assertIsNone(extract_json_array('{"a": 1}'))  # object, not array
 
     def test_normalize_and_lesson_key(self):

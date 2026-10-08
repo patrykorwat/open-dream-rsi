@@ -31,13 +31,15 @@ def _apply_no_thinking(cfg) -> None:
     """ODR_LLM_NO_THINKING=1: ask vLLM chat templates to skip hidden reasoning.
 
     Reasoning models (Qwen3.x builds) can burn the whole completion budget on
-    thinking and return empty content; disabling it made a real Spark run go
-    from timeout to a correct answer in 19s. Applied only to OpenAI-compatible
-    clients that accept chat_template_kwargs.
+    thinking and return empty or rambling content; disabling it made a real
+    Spark run go from timeout to a correct answer in 19s. ON BY DEFAULT: the
+    loop wants structured answers, not hidden reasoning. Endpoints that reject
+    the flag self-heal (plain retry on HTTP 400); opt out with
+    ODR_LLM_NO_THINKING=0 for models whose thinking is in-band.
     """
     import os
 
-    if os.environ.get("ODR_LLM_NO_THINKING", "").lower() in ("1", "true", "yes"):
+    if os.environ.get("ODR_LLM_NO_THINKING", "1").lower() not in ("0", "false", "no"):
         cfg.extra_payload.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
 
 

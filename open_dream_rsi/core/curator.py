@@ -166,13 +166,55 @@ def extract_json_array(reply: str) -> Optional[List[Any]]:
             body = body[body.index("\n") + 1:] if "\n" in body else ""
         s = body.strip()
     start, end = s.find("["), s.rfind("]")
-    if start == -1 or end <= start:
+    if start == -1:
         return None
-    try:
-        data = json.loads(s[start:end + 1])
-    except json.JSONDecodeError:
+    if end > start:
+        try:
+            data = json.loads(s[start:end + 1])
+            if isinstance(data, list):
+                return data
+        except json.JSONDecodeError:
+            pass
+    # no closing bracket, or unparseable: salvage complete leading objects
+    return _salvage_array(s[start:])
+
+
+def _salvage_array(body: str) -> Optional[List[Any]]:
+    """Parse a JSON array truncated mid-stream: keep the leading objects
+    that are complete (balanced braces outside strings) and close the list.
+    A decoder that rambles or hits its token limit still yields lessons."""
+    if not body.startswith("["):
         return None
-    return data if isinstance(data, list) else None
+    for cut in (i for i in range(len(body), 1, -1) if body[i - 1] == "}"):
+        candidate = body[:cut]
+        depth = 0
+        in_str = False
+        esc = False
+        ok = True
+        for ch in candidate:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth < 0:
+                        ok = False
+                        break
+        if not ok or depth != 0:
+            continue
+        try:
+            data = json.loads(candidate + "]")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, list):
+            return data
+    return None
 
 
 def curate_lessons(existing: List[Dict[str, Any]],
@@ -338,7 +380,7 @@ class KnowledgeCurator:
     """
 
     def __init__(self, client: Any, max_lessons: int = 3,
-                 max_repair: int = 1, max_tokens: Optional[int] = None):
+                 max_repair: int = 1, max_tokens: int = 4096):
         self.client = client
         self.max_lessons = max_lessons
         self.max_repair = max_repair
@@ -362,8 +404,7 @@ class KnowledgeCurator:
                     f"Previous rejection reason: {feedback or '(none)'}\n\n"
                     f"Return the JSON array of at most {self.max_lessons} lessons.")
             kwargs: Dict[str, Any] = {"temperature": 0.5}  # distillation, not creativity
-            if self.max_tokens:
-                kwargs["max_tokens"] = self.max_tokens
+            kwargs["max_tokens"] = self.max_tokens
             try:
                 reply = self.client.chat(
                     [{"role": "system", "content": LESSON_CONTRACT.format(max_lessons=self.max_lessons)},
