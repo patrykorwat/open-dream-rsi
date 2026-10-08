@@ -102,10 +102,28 @@ def on_session_end(**kw) -> None:
             env["OPENAI_BASE_URL"] = cfg["base_url"]
         if cfg.get("model"):
             env["ODR_LLM_MODEL"] = cfg["model"]
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL,
-                         stdin=subprocess.DEVNULL,
-                         start_new_session=True, env=env)
+        # self-logging: if the child never runs, the log stays empty and
+        # the error is visible instead of silent
+        log = Path(cfg["memory"]) / "trigger.log"
+        fh = None
+        try:
+            fh = log.open("a", encoding="utf-8")
+            fh.write(f"{now} fire: {' '.join(cmd)}\n")
+            fh.flush()
+        except Exception:
+            fh = None
+        try:
+            subprocess.Popen(cmd, stdout=(fh or subprocess.DEVNULL),
+                             stderr=subprocess.STDOUT,
+                             stdin=subprocess.DEVNULL,
+                             start_new_session=True, env=env)
+        except Exception as exc:
+            if fh:
+                fh.write(f"{now} popen-failed: {exc!r}\n")
+            raise
+        finally:
+            if fh:
+                fh.close()
     except Exception as exc:
         try:
             if _CTX is not None:
