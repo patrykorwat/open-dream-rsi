@@ -102,9 +102,23 @@ def on_session_end(**kw) -> None:
         pass
 
 
+def _bootstrap_path() -> None:
+    """Make open_dream_rsi importable without host env setup (mass install):
+    ODR_ROOT, /opt/odr, or a sibling checkout next to this plugin."""
+    candidates = [os.environ.get("ODR_ROOT", ""), "/opt/odr"]
+    here = Path(__file__).resolve()
+    candidates.append(str(here.parents[2]))  # .../open-dream-rsi/plugins/x/..
+    for c in candidates:
+        if c and (Path(c) / "open_dream_rsi").is_dir():
+            if c not in __import__("sys").path:
+                __import__("sys").path.insert(0, c)
+            return
+
+
 def register(ctx) -> None:
     global _CTX
     try:
+        _bootstrap_path()
         import open_dream_rsi  # noqa: F401
     except ImportError:
         if not _STATE["warned"]:
