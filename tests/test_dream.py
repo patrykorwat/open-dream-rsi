@@ -87,6 +87,21 @@ class TestDreamOnce(unittest.TestCase):
         report = dream_once(self.mem, client=None)
         self.assertFalse(report["skipped"])
 
+    def test_probe_tasks_queued_from_failure_sessions(self):
+        from open_dream_rsi.memory import DreamMemory
+        mem = DreamMemory(self.mem)
+        ingest_sessions(mem, self.db, client=_NoLLM())
+        tp = self.mem / "tasks.json"
+        self.assertTrue(tp.exists())
+        tasks = json.loads(tp.read_text())
+        probes = [t for t in tasks if str(t["task_id"]).startswith("probe:")]
+        self.assertEqual(len(probes), 3)
+        self.assertEqual(probes[0]["max_attempts"], 1)
+        self.assertEqual(probes[0]["prompt"], "fix this broken thing")
+        # idempotent: a second ingest adds no duplicates
+        ingest_sessions(mem, self.db, client=_NoLLM())
+        self.assertEqual(len(json.loads(tp.read_text())), 3)
+
     def test_ingest_skips_seen_sessions(self):
         from open_dream_rsi.memory import DreamMemory
         mem = DreamMemory(self.mem)

@@ -103,13 +103,20 @@ Queue tasks in `tasks.json`:
 }]
 ```
 
-Run the supervisor — as a daemon, or as a single cycle from cron:
+Run the supervisor — as a daemon, or once per trigger. The recommended
+automated path is `dream`: one command that imports session evidence,
+runs the promotion gate when (and only when) the evidence justifies it,
+does ALM maintenance, and publishes earned lessons as skills. Cadence is
+decided inside the module, not by the caller — see
+[Cadence](#cadence-when-does-the-world-dreamer-actually-run):
 
 ```bash
 export OPENAI_API_KEY=***            # any OpenAI-compatible endpoint
-python -m open_dream_rsi loop --tasks tasks.json --interval 300
-python -m open_dream_rsi loop --tasks tasks.json --once    # cron-friendly
-python -m open_dream_rsi status                             # what it has learned
+python -m open_dream_rsi --memory .dream_rsi dream \
+    --sessions ~/.hermes/state.db --skills-out ~/.hermes/skills/odr-curated
+python -m open_dream_rsi loop --tasks tasks.json --interval 300   # daemon mode
+python -m open_dream_rsi loop --tasks tasks.json --once           # single cycle
+python -m open_dream_rsi status                                    # what it learned
 ```
 
 No key? Everything deterministic still runs: `bench`, `bench-policy`,
@@ -637,7 +644,7 @@ uses — the code never handles credentials.
 |---|---|---|
 | `odr mcp` (stdio) / `--http` | Hermes → ODR | Hermes calls `odr_run_once` / `odr_dream` / `odr_status` as tools |
 | `plugins/hermes_sentinel/` | Hermes → ODR engine | Sentinel observes tool results, annotates, gates |
-| `plugins/hermes_odr_trigger/` | Hermes → ODR engine | session-end hook fires `dream_once` in-process (no shell/cron) |
+| `plugins/hermes_odr_trigger/` | Hermes → ODR engine | session-end hook spawns the detached `odr dream` cycle (no shell/cron) |
 | `odr sessions export/distill` | Hermes → curator | session history becomes staging lessons |
 | `odr skills export` | curator → Hermes | active lessons become discovered SKILL.md files |
 | `odr dream` | any trigger | one automated cycle: evidence → gate → ALM → skills |
@@ -657,6 +664,14 @@ when there is nothing new to learn:
 So a busy day dreams a few times, a quiet day once, an idle day never —
 and concurrent calls collapse on a single-instance lock. The cadence knobs
 (`min_new_evidence`, `max_age_seconds`) are arguments, not config sprawl.
+
+**Probes are queued automatically.** The promotion gate needs tasks to
+replay lessons against, and `ingest_sessions` supplies the honest ones:
+every failure-shaped session also appends its *own request* to
+`tasks.json` as a `probe:<session>` task (`max_attempts=1`, appended
+after manual tasks so probes can never starve real work). You never write
+tasks to keep the gate alive — the evidence you already produced is the
+counterparty.
 
 **Why not per-session-full-dream?** the promotion gate costs ~4 LLM calls
 per candidate lesson per probe; firing it every session would spend the
@@ -755,6 +770,7 @@ dreamed-policy gauges per category and the learned recipe library.
 | `core.curator` | lesson distillation, headroom verdict, gate verdict |
 | `core.judge` | completion judge for test-less (`criteria`) tasks |
 | `loop` | `AutoRSIRuntime` — the autonomous supervisor (opt-in `sentinel_engine`) |
+| `dream` | `dream_once` — automated cadence seam: evidence ingest, tier decision, gate + ALM, skills publish; lock-guarded |
 | `lifecycle` | `ArtifactLifecycleManager` — state machine, event-sourced history, lineage, GC |
 | `sessions` | Hermes `state.db` / Cursor `state.vscdb` readers, redaction, lessons→skills bridge |
 | `memory` | `DreamMemory` — policies, recipes, lessons, trees, events |

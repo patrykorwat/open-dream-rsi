@@ -98,14 +98,61 @@ def _save_state(memory_root: Path, state: Dict[str, Any]) -> None:
 
 # -- cheap tier: evidence -----------------------------------------------------
 
+def _probe_task(ep, category: str) -> Optional[Dict[str, Any]]:
+    """Derive a replay-probe task from an episode: the user's own request,
+    verbatim (bounded), as a test-less task.
+
+    The promotion gate needs tasks to probe lessons against — and the
+    honest probe is the very task whose failure produced the lesson. These
+    land at the END of tasks.json (manual/queued tasks keep priority) with
+    max_attempts=1 so probes can never starve real work.
+    """
+    prompt = ""
+    for m in getattr(ep, "messages", []):
+        if getattr(m, "role", "") == "user":
+            prompt = str(getattr(m, "text", "") or "").strip()
+            break
+    if not prompt:
+        return None
+    return {"task_id": f"probe:{ep.session_id}", "category": category,
+            "prompt": prompt[:4000], "tests": [],
+            "criteria": "Solve the task above without repeating the "
+                        "errors recorded in this session's history.",
+            "max_attempts": 1}
+
+
+def _append_probe_tasks(memory_root: Path, probes: List[Dict[str, Any]]) -> int:
+    """Append unseen probe tasks to tasks.json (dedup by task_id)."""
+    if not probes:
+        return 0
+    tp = memory_root / "tasks.json"
+    try:
+        existing = json.loads(tp.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        existing = []
+    known = {t.get("task_id") for t in existing if isinstance(t, dict)}
+    added = 0
+    for t in probes:
+        if t["task_id"] not in known:
+            existing.append(t)
+            known.add(t["task_id"])
+            added += 1
+    if added:
+        tmp = tp.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(existing, indent=1), encoding="utf-8")
+        tmp.replace(tp)
+    return added
+
+
 def ingest_sessions(memory, sessions_db: "str | Path", *,
                     limit: int = 25, client=None,
                     category: Optional[str] = None) -> Dict[str, Any]:
-    """Distil NEW (unseen) host sessions into staging lessons.
+    """Distil NEW (unseen) host sessions into staging lessons AND queue
+    their source tasks as replay probes (the gate's counterparties).
 
-    Returns {'new': n_sessions, 'added': n_lessons}. Sessions already
-    processed are skipped — transcripts stay in state.db, so skipping a
-    cycle loses nothing.
+    Returns {'new': n_sessions, 'added': n_lessons, 'probes': n_tasks}.
+    Sessions already processed are skipped — transcripts stay in state.db,
+    so skipping a cycle loses nothing.
     """
     from open_dream_rsi.core.curator import (curate_lessons,
                                              evidence_snippets,
@@ -128,12 +175,16 @@ def ingest_sessions(memory, sessions_db: "str | Path", *,
         # zero new so the caller stays in the cheap maintenance tier.
         return {"new": 0, "added": 0, "deferred": len(new)}
     added_total = 0
+    probes: List[Dict[str, Any]] = []
     for ep in new:
         seen.add(ep.session_id)
         failures = episode_failures(ep)
         if not failures:
             continue
         cat = category or (Path(ep.cwd).name if ep.cwd else ep.source)
+        probe = _probe_task(ep, cat)
+        if probe is not None:
+            probes.append(probe)
         distilled, err = curator.distill(cat, ep.title or cat, failures,
                                          memory.get_lessons(cat))
         if err or not distilled:
@@ -150,7 +201,10 @@ def ingest_sessions(memory, sessions_db: "str | Path", *,
         added_total += len(result.added)
     state["seen_sessions"] = sorted(seen)[-2000:]
     _save_state(root, state)
-    return {"new": len(new), "added": added_total}
+    n_probes = _append_probe_tasks(root, probes)
+    if n_probes:
+        memory.log_event("probe_tasks_queued", count=n_probes)
+    return {"new": len(new), "added": added_total, "probes": n_probes}
 
 
 # -- the seam ------------------------------------------------------------------
