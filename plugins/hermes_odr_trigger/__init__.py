@@ -81,8 +81,9 @@ def on_session_end(**kw) -> None:
         # with them. The dream is one plain command (python -m
         # open_dream_rsi dream ...); its own lock collapses overlaps and
         # its own cadence logic decides the tier, so this stays honest.
-        cmd = [sys.executable, "-m", "open_dream_rsi", "dream",
-               "--memory", cfg["memory"],
+        # --memory is a GLOBAL flag: it must precede the subcommand.
+        cmd = [sys.executable, "-m", "open_dream_rsi",
+               "--memory", cfg["memory"], "dream",
                "--sessions", cfg["sessions_db"],
                "--skills-out", cfg["skills_out"],
                "--provider", cfg["provider"],
