@@ -67,6 +67,12 @@ def _resolve() -> Dict[str, Any]:
 def on_session_end(**kw) -> None:
     try:
         now = time.time()
+        try:
+            if _CTX is not None:
+                _CTX.logger.info("odr-trigger: session-end hook fired (%s)",
+                                 kw.get("session_id", "?"))
+        except Exception:
+            pass
         cfg = _resolve()
         if now - _STATE["last_fire"] < float(cfg["min_interval_seconds"]):
             return
