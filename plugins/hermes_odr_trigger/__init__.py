@@ -27,6 +27,7 @@ Config (plugins.entries.odr-trigger.settings.*):
 """
 from __future__ import annotations
 
+import atexit
 import os
 import threading
 import time
@@ -86,8 +87,12 @@ def _run(cfg: Dict[str, Any]) -> None:
         dream_once(cfg["memory"], sessions_db=cfg["sessions_db"],
                    skills_out=cfg["skills_out"], client=client,
                    budget=cfg["budget"])
-    except Exception:
-        pass  # a failed dream must never surface in the user's session
+    except Exception as exc:  # never surface in the user's session
+        try:
+            if _CTX is not None:
+                _CTX.logger.warning("odr-trigger: dream failed: %r", exc)
+        except Exception:
+            pass
 
 
 def on_session_end(**kw) -> None:
@@ -97,9 +102,19 @@ def on_session_end(**kw) -> None:
         if now - _STATE["last_fire"] < float(cfg["min_interval_seconds"]):
             return
         _STATE["last_fire"] = now
-        threading.Thread(target=_run, args=(cfg,), daemon=True).start()
-    except Exception:
-        pass
+        # Non-daemon: a CLI host process exits seconds after the session
+        # ends — a daemon thread would die mid-dream. atexit gives it a
+        # bounded grace period, then lets shutdown proceed (the lock makes
+        # an unfinished dream harmless: the next trigger reclaims it).
+        t = threading.Thread(target=_run, args=(cfg,), daemon=False)
+        t.start()
+        atexit.register(t.join, float(cfg.get("shutdown_grace_seconds", 90)))
+    except Exception as exc:
+        try:
+            if _CTX is not None:
+                _CTX.logger.warning("odr-trigger: trigger failed: %r", exc)
+        except Exception:
+            pass
 
 
 def _bootstrap_path() -> None:
