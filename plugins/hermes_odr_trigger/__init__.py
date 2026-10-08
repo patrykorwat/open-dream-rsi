@@ -132,21 +132,30 @@ def on_session_end(**kw) -> None:
             pass
 
 
+_ROOT = None  # resolved once; the CHILD needs the path even when the
+# hook process can already import the package (sys.path bootstrap does
+# not cross the process boundary).
+
+
 def _odr_root() -> str:
     """Locate an importable open_dream_rsi without host env setup (mass
     install): ODR_ROOT, /opt/odr, or a sibling checkout of this plugin."""
-    try:
-        import open_dream_rsi  # installed package wins
-        return ""
-    except ImportError:
-        pass
+    global _ROOT
+    if _ROOT is not None:
+        return _ROOT
     candidates = [os.environ.get("ODR_ROOT", ""), "/opt/odr"]
     here = Path(__file__).resolve()
     candidates.append(str(here.parents[2]))  # .../open-dream-rsi/plugins/x/..
     for c in candidates:
         if c and (Path(c) / "open_dream_rsi").is_dir():
+            _ROOT = c
             return c
-    return ""
+    try:  # installed package: its own directory is the child's path too
+        import open_dream_rsi
+        _ROOT = str(Path(open_dream_rsi.__file__).resolve().parent.parent)
+    except ImportError:
+        _ROOT = ""
+    return _ROOT
 
 
 def _bootstrap_path() -> None:
