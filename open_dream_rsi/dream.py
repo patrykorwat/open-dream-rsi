@@ -113,11 +113,16 @@ def ingest_sessions(memory, sessions_db: "str | Path", *,
         return {"new": 0, "added": 0}
 
     curator = KnowledgeCurator(client) if client is not None else None
+    if curator is None:
+        # No endpoint right now: leave everything unseen — the next cycle
+        # with a live client distils it; evidence is never lost. Report
+        # zero new so the caller stays in the cheap maintenance tier.
+        return {"new": 0, "added": 0, "deferred": len(new)}
     added_total = 0
     for ep in new:
         seen.add(ep.session_id)
         failures = episode_failures(ep)
-        if not failures or curator is None:
+        if not failures:
             continue
         cat = category or (Path(ep.cwd).name if ep.cwd else ep.source)
         distilled, err = curator.distill(cat, ep.title or cat, failures,

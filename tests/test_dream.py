@@ -46,7 +46,7 @@ class _NoLLM:
     """Client that fails every call — forces distill to reject cleanly and
     keeps tests free of LLM traffic."""
 
-    def complete(self, *a, **k):
+    def chat(self, *a, **k):
         raise RuntimeError("no llm in tests")
 
 
@@ -90,16 +90,23 @@ class TestDreamOnce(unittest.TestCase):
     def test_ingest_skips_seen_sessions(self):
         from open_dream_rsi.memory import DreamMemory
         mem = DreamMemory(self.mem)
-        r1 = ingest_sessions(mem, self.db, client=None)
+        # a live-shaped client (distillation may fail; sessions are still
+        # accounted as seen). client=None means "no endpoint" -> sessions
+        # stay unseen until a cycle can actually distil them.
+        r1 = ingest_sessions(mem, self.db, client=_NoLLM())
         self.assertEqual(r1["new"], 3)
-        r2 = ingest_sessions(mem, self.db, client=None)
+        r2 = ingest_sessions(mem, self.db, client=_NoLLM())
         self.assertEqual(r2["new"], 0)
+        fresh = Path(tempfile.mkdtemp()) / "mem2"
+        fresh.mkdir()
+        r3 = ingest_sessions(DreamMemory(fresh), self.db, client=None)
+        self.assertEqual(r3["new"], 0)  # offline never marks evidence seen
 
     def test_maintenance_tier_when_no_new_evidence(self):
-        # first full run establishes last_full_dream; an immediate second
-        # call with no new sessions must be maintenance (budget 0)
-        dream_once(self.mem, sessions_db=self.db, client=None)
-        report = dream_once(self.mem, sessions_db=self.db, client=None)
+        # first full run establishes last_full_dream and accounts the
+        # sessions; an immediate second call must be maintenance (budget 0)
+        dream_once(self.mem, sessions_db=self.db, client=_NoLLM())
+        report = dream_once(self.mem, sessions_db=self.db, client=_NoLLM())
         self.assertEqual(report["tier"], "maintenance")
 
 
