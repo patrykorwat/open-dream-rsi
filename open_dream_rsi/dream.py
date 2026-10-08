@@ -50,7 +50,16 @@ def _acquire(memory_root: Path) -> Optional[Path]:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
         try:
-            if time.time() - lock.stat().st_mtime > LOCK_TIMEOUT_S:
+            stale = time.time() - lock.stat().st_mtime > LOCK_TIMEOUT_S
+            if not stale:  # owner crashed without releasing: dead pid?
+                try:
+                    owner = int(lock.read_text().strip())
+                    os.kill(owner, 0)  # raises if gone
+                except (ValueError, ProcessLookupError):
+                    stale = True
+                except PermissionError:
+                    pass  # alive, just not ours
+            if stale:
                 lock.unlink(missing_ok=True)
                 return _acquire(memory_root)
         except OSError:
