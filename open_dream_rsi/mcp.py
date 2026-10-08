@@ -221,6 +221,42 @@ def tool_odr_run_once(args: Dict[str, Any]) -> Dict[str, Any]:
     return report
 
 
+def tool_odr_dream(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Automated cycle from any trigger: evidence import, promotion gate,
+    ALM maintenance, skills publish. Cadence is decided internally (cheap
+    maintenance per call; the full world dreamer only when new evidence or
+    staleness justifies the cost), so firing this per session is safe."""
+    from open_dream_rsi.dream import dream_once
+    from open_dream_rsi.memory import DreamMemory
+
+    memory = DreamMemory(_memory_root(args))
+    client = None
+    provider = args.get("provider") or _default_provider()
+    if provider != "mock":
+        try:
+            from open_dream_rsi.cli import _build_client
+            client = _build_client(provider, args.get("model"))
+            if hasattr(client, "config"):
+                client.config.timeout = float(args.get("timeout", 300))
+                if not _is_official_endpoint(client.config.base_url):
+                    client.config.extra_payload.setdefault(
+                        "chat_template_kwargs", {})[
+                        "enable_thinking"] = False
+        except Exception:
+            client = None  # no endpoint: maintenance-only cycle, still valid
+    return dream_once(
+        memory.root,
+        sessions_db=args.get("sessions_db") or os.environ.get("ODR_SESSIONS_DB"),
+        skills_out=args.get("skills_out") or os.environ.get("ODR_SKILLS_OUT"),
+        client=client,
+        budget=int(args.get("budget", 20)),
+        max_tokens=int(args.get("max_tokens", 4096)),
+        category=args.get("category"),
+        min_new_evidence=int(args.get("min_new_evidence", 3)),
+        max_age_seconds=float(args.get("max_age_seconds", 6 * 3600)),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tool registry + JSON-RPC plumbing
 # ---------------------------------------------------------------------------
@@ -294,6 +330,36 @@ TOOLS: Dict[str, Dict[str, Any]] = {
                                            "much faster, often better code)"},
             "budget": {"type": "integer", "description": "Max API calls (default 10)"}}},
         "fn": tool_odr_run_once,
+    },
+    "odr_dream": {
+        "description": "Run the automated improvement cycle: import new host "
+                       "session evidence, distil candidate lessons, run the "
+                       "promotion gate + ALM maintenance, publish earned "
+                       "lessons as skills. Safe to call after every task — "
+                       "the cadence is decided internally (cheap maintenance "
+                       "per call; the full dreamer only when new evidence or "
+                       "staleness justifies it), and concurrent calls are "
+                       "collapsed by a lock.",
+        "inputSchema": {"type": "object", "properties": {
+            "memory": {"type": "string"},
+            "sessions_db": {"type": "string",
+                            "description": "host state.db for evidence "
+                                           "(default $ODR_SESSIONS_DB)"},
+            "skills_out": {"type": "string",
+                           "description": "render ACTIVE lessons here as "
+                                         "SKILL.md (default $ODR_SKILLS_OUT)"},
+            "provider": {"type": "string",
+                         "enum": ["openai", "cursor", "local", "goose", "mock"]},
+            "model": {"type": "string"},
+            "budget": {"type": "integer",
+                       "description": "max API calls for a FULL dream (default 20)"},
+            "max_age_seconds": {"type": "number",
+                                "description": "force a full dream at least "
+                                               "this often (default 21600)"},
+            "min_new_evidence": {"type": "integer",
+                                 "description": "full dream when this many "
+                                                "new sessions arrive (default 3)"}}},
+        "fn": tool_odr_dream,
     },
 }
 

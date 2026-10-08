@@ -635,11 +635,45 @@ uses — the code never handles credentials.
 
 | Path | Direction | What it does |
 |---|---|---|
-| `odr mcp` (stdio) / `--http` | Hermes → ODR | Hermes calls `odr_run_once` / `odr_status` as tools |
+| `odr mcp` (stdio) / `--http` | Hermes → ODR | Hermes calls `odr_run_once` / `odr_dream` / `odr_status` as tools |
 | `plugins/hermes_sentinel/` | Hermes → ODR engine | Sentinel observes tool results, annotates, gates |
+| `plugins/hermes_odr_trigger/` | Hermes → ODR engine | session-end hook fires `dream_once` in-process (no shell/cron) |
 | `odr sessions export/distill` | Hermes → curator | session history becomes staging lessons |
 | `odr skills export` | curator → Hermes | active lessons become discovered SKILL.md files |
-| `cron: odr loop --once` | offline | dreaming + gating runs out-of-band |
+| `odr dream` | any trigger | one automated cycle: evidence → gate → ALM → skills |
+
+### Cadence: when does the world dreamer actually run?
+
+The seam is `dream_once()` (CLI `odr dream`, MCP `odr_dream`, or the Hermes
+session-end hook). **You do not set a schedule — the module decides the tier
+per call**, so firing it after every task is safe and costs nothing extra
+when there is nothing new to learn:
+
+| Tier | Triggered when | What runs |
+|---|---|---|
+| **maintenance** | quiet call (no new evidence, recent last dream) | ingest scan (cheap), ALM stale/supersede/archive/GC, skills republish — **zero LLM** |
+| **full** | `min_new_evidence` (default 3) new failure-shaped sessions, OR `max_age_seconds` (default 6 h) since the last full dream | + online attempts, dreaming, paired-replay promotion gate (`budget`, default 20 API calls) |
+
+So a busy day dreams a few times, a quiet day once, an idle day never —
+and concurrent calls collapse on a single-instance lock. The cadence knobs
+(`min_new_evidence`, `max_age_seconds`) are arguments, not config sprawl.
+
+**Why not per-session-full-dream?** the promotion gate costs ~4 LLM calls
+per candidate lesson per probe; firing it every session would spend the
+whole budget re-proving lessons already proven. **Why not cron?** a fixed
+schedule is blind to evidence — it dreams on idle days and starves busy
+ones. The evidence-justified tier gets both wrongness out.
+
+For a mass install the whole thing is two artifacts, no host glue:
+
+```bash
+pip install open-dream-rsi                       # library + CLI + MCP server
+cp -r plugins/hermes_odr_trigger $HERMES_HOME/plugins/odr-trigger
+hermes plugins enable odr-trigger                # restart to load the hook
+# optional overrides:
+hermes config set plugins.entries.odr-trigger.settings.provider local
+hermes config set plugins.entries.odr-trigger.settings.base_url http://.../v1
+```
 
 ---
 

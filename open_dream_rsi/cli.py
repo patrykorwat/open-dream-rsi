@@ -179,6 +179,26 @@ def cmd_sessions(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dream(args: argparse.Namespace) -> int:
+    """Automated cycle: evidence -> candidates -> promotion gate -> skills.
+
+    The cadence is decided inside open_dream_rsi.dream (cheap maintenance
+    per call; the full world dreamer only when evidence justifies the
+    cost), so any trigger — a Hermes hook, the MCP tool, or this CLI —
+    can fire as often as it likes without overrunning the budget."""
+    from open_dream_rsi.dream import dream_once
+
+    client = None
+    if not args.offline:
+        client = _build_client(args.provider, args.model)
+    report = dream_once(
+        args.memory, sessions_db=args.sessions, skills_out=args.skills_out,
+        client=client, budget=args.budget, max_tokens=args.max_tokens,
+        category=args.category)
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
 def cmd_lessons(args: argparse.Namespace) -> int:
     """Git-backed lesson stores: publish active lessons, import others'
     knowledge as staging (see README 'Sharing lessons')."""
@@ -300,6 +320,28 @@ def main(argv: list[str] | None = None) -> int:
     loop.add_argument("--cycles", type=int, default=None, help="stop after N cycles")
     loop.add_argument("--once", action="store_true", help="single cycle (for cron)")
     loop.set_defaults(func=cmd_loop)
+
+    dr = sub.add_parser(
+        "dream",
+        help="automated cycle — evidence import, promotion gate, ALM "
+             "maintenance, skills publish; safe to fire from any trigger "
+             "(cadence is decided internally, not by the caller)")
+    dr.add_argument("--sessions", default=None,
+                    help="host state.db to import evidence from "
+                         "(e.g. ~/.hermes/state.db)")
+    dr.add_argument("--skills-out", default=None,
+                    help="render ACTIVE lessons here as SKILL.md files")
+    dr.add_argument("--provider", default="openai",
+                    choices=["openai", "cursor", "local", "goose"])
+    dr.add_argument("--model", default=None)
+    dr.add_argument("--category", default=None,
+                    help="force one KB category (default: per-episode cwd)")
+    dr.add_argument("--budget", type=int, default=20,
+                    help="max API calls for a FULL dream (default 20)")
+    dr.add_argument("--max-tokens", type=int, default=4096)
+    dr.add_argument("--offline", action="store_true",
+                    help="no LLM: lifecycle maintenance only")
+    dr.set_defaults(func=cmd_dream)
 
     status = sub.add_parser("status", help="show learned policies, recipes, recent events")
     status.set_defaults(func=cmd_status)

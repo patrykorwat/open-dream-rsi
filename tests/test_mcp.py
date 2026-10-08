@@ -49,10 +49,11 @@ class HandshakeTests(unittest.TestCase):
         self.assertEqual(res["error"]["code"], -32601)
         self.assertNotIn("result", res)
 
-    def test_tools_list_exposes_the_five_loop_tools(self):
+    def test_tools_list_exposes_the_six_loop_tools(self):
         names = {t["name"] for t in call("tools/list")["result"]["tools"]}
         self.assertEqual(names, {"odr_status", "odr_recipes", "odr_lessons",
-                                 "odr_add_task", "odr_run_once"})
+                                 "odr_add_task", "odr_run_once",
+                                 "odr_dream"})
 
 
 class ToolTests(unittest.TestCase):
