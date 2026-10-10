@@ -148,5 +148,79 @@ class ModelDiscoveryTests(unittest.TestCase):
         self.assertEqual(LLMConfig.from_env().model, "gpt-4o-mini")
 
 
+class StaleModelEndpoint(BaseHTTPRequestHandler):
+    """POST 404s the pinned 'stale' model; GET /models lists the real one."""
+
+    def do_GET(self):
+        raw = json.dumps({"data": [{"id": "served-model-A"}]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        SEEN.append(body)
+        if body.get("model") == "stale":
+            raw = json.dumps({"error": {"message":
+                "The model `stale` does not exist."}}).encode()
+            self.send_response(404)
+        else:
+            raw = json.dumps({"choices": [{"message": {
+                "role": "assistant", "content": "ok"}, "finish_reason": "stop"}]}).encode()
+            self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, *args):
+        pass
+
+
+class StaleModelSelfHealTests(unittest.TestCase):
+    """HTTP 404 'model does not exist' -> re-discover once and retry."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = HTTPServer(("127.0.0.1", 0), StaleModelEndpoint)
+        cls.base = f"http://127.0.0.1:{cls.srv.server_address[1]}/v1"
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+
+    def setUp(self):
+        SEEN.clear()
+        self._saved = os.environ.get("ODR_LLM_MODEL")
+        os.environ.pop("ODR_LLM_MODEL", None)
+
+    def tearDown(self):
+        if self._saved is None:
+            os.environ.pop("ODR_LLM_MODEL", None)
+        else:
+            os.environ["ODR_LLM_MODEL"] = self._saved
+
+    def test_stale_pin_rediscovers_and_retries(self):
+        cfg = LLMConfig(base_url=self.base, api_key="***", model="stale")
+        client = OpenAICompatibleClient(cfg)
+        self.assertEqual(client.chat([{"role": "user", "content": "x"}]), "ok")
+        self.assertEqual([b["model"] for b in SEEN], ["stale", "served-model-A"])
+        self.assertEqual(cfg.model, "served-model-A")
+        # the discovered model sticks: no second 404 round-trip
+        SEEN.clear()
+        client.chat([{"role": "user", "content": "y"}])
+        self.assertEqual([b["model"] for b in SEEN], ["served-model-A"])
+
+    def test_404_without_discovery_raises(self):
+        # no /models endpoint reachable -> the original error propagates
+        cfg = LLMConfig(base_url="http://127.0.0.1:1/v1", api_key="***", model="stale")
+        client = OpenAICompatibleClient(cfg)
+        with self.assertRaises(LLMError):
+            client.chat([{"role": "user", "content": "x"}])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -208,12 +208,25 @@ class OpenAICompatibleClient:
         try:
             data = self._post("/chat/completions", payload)
         except LLMError as exc:
-            # Self-heal: endpoints that reject the extra payload (e.g. do not
-            # accept chat_template_kwargs) get one retry with the plain
-            # OpenAI body, and the extra flags stay dropped this session.
-            if self.config.extra_payload and "HTTP 400" in str(exc):
+            text = str(exc)
+            if self.config.extra_payload and "HTTP 400" in text:
+                # Self-heal: endpoints that reject the extra payload (e.g. do
+                # not accept chat_template_kwargs) get one retry with the
+                # plain OpenAI body, and the extra flags stay dropped.
                 self.config.extra_payload.clear()
                 data = self._post("/chat/completions", base_payload)
+            elif "HTTP 404" in text and "does not exist" in text:
+                # Self-heal: a pinned model the endpoint no longer serves
+                # (renamed / deployed-away local model). Re-discover once and
+                # retry; the served model stays for the rest of the session.
+                served = _default_model(self.config.base_url, self.config.api_key)
+                if served and served != base_payload["model"]:
+                    self.config.model = served
+                    base_payload["model"] = served
+                    payload = {**base_payload, **self.config.extra_payload}
+                    data = self._post("/chat/completions", payload)
+                else:
+                    raise
             else:
                 raise
         try:
