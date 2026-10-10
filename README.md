@@ -180,7 +180,9 @@ Claude Code, OpenCode, Zed) and Streamable-HTTP (`mcp --http --port 8800`)
 for remote connectors (Claude Cowork / claude.ai). One config block and your
 everyday agent can queue tasks for the dreamer, pull verified recipes and
 consult curated lessons — **zero extra LLM setup**: the dreamer resolves its
-own brain (env → local goose config → localhost vLLM).
+own brain (env → local goose config → localhost vLLM), and when no model is
+pinned it asks the endpoint itself (`GET /v1/models`) — a redeployed local
+server is picked up automatically.
 
 ```bash
 python3 -m open_dream_rsi mcp --tasks ./tasks.json --memory ./.dream_rsi

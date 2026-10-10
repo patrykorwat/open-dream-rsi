@@ -29,7 +29,9 @@ The loop uses the same OpenAI-compatible env vars as everywhere else:
 ```bash
 export OPENAI_BASE_URL=http://127.0.0.1:8000/v1   # vLLM / Ollama / any gateway
 export OPENAI_API_KEY=***                  # any token for local servers
-export ODR_LLM_MODEL=your-model-name               # exact served model name
+export ODR_LLM_MODEL=your-model-name       # optional — the first model the
+# endpoint serves (GET /v1/models) is auto-detected when unset; pin only to
+# select among several served models
 ```
 
 ---
@@ -410,7 +412,8 @@ queries).
   in the same directory; any traceback you see there is the real error
   (usually `open_dream_rsi` not importable → re-run `pip install -e .`).
 - **`odr_run_once` is slow / 0 solved** — it is making real LLM calls; check
-  `OPENAI_BASE_URL`/`ODR_LLM_MODEL` and try `provider: "mock"` for a key-free
+  `OPENAI_BASE_URL` (the served model is auto-detected via `/v1/models`
+  unless `ODR_LLM_MODEL` is pinned) and try `provider: "mock"` for a key-free
   smoke test of the plumbing.
 - **Tool call denied** — Goose prompts per tool the first time; approve it.
 - **Tools exist but the model never calls them** — by design no model

@@ -9,6 +9,10 @@ implements the OpenAI protocol (``POST {base_url}/chat/completions``) works:
 
 The client uses only the standard library (urllib), so the core package
 remains free of external dependencies.
+
+Unless a model is pinned (explicitly or via ``ODR_LLM_MODEL``), the first
+model the endpoint serves (``GET /v1/models``) is used — a redeployed
+local server is picked up automatically, no config edits needed.
 """
 
 from __future__ import annotations
@@ -21,6 +25,36 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 DEFAULT_TIMEOUT = 120.0
+
+#: Model discovery GET timeout (the /models listing must never stall a run).
+_DISCOVERY_TIMEOUT = 30.0
+
+
+def _default_model(base_url: str, api_key: Optional[str]) -> Optional[str]:
+    """Ask an OpenAI-compatible endpoint which model to use by default.
+
+    Returns the first id served under ``GET {base_url}/models`` or ``None``
+    when the listing is missing/unreachable — callers fall back to their own
+    default. Keeps local deployments working across model redeploys: a
+    renamed served model is picked up automatically instead of a pinned
+    (and now-404ing) name.
+    """
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/models",
+        headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_DISCOVERY_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (OSError, ValueError):  # URLError/HTTPError/timeout, bad JSON
+        return None
+    models = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(models, list) or not models:
+        return None
+    first = models[0]
+    return first.get("id") if isinstance(first, dict) else None
+
 
 #: Predefined OpenAI-compatible endpoint profiles.
 ENDPOINT_PRESETS: Dict[str, Dict[str, str]] = {
@@ -82,7 +116,8 @@ class LLMConfig:
         (or overridden in ``overrides``). It is never stored in code.
 
         Precedence: explicit ``overrides`` > environment variables
-        (``OPENAI_BASE_URL``, ``ODR_LLM_MODEL``) > preset defaults.
+        (``OPENAI_BASE_URL``, ``ODR_LLM_MODEL``) > endpoint model discovery
+        (first id from ``GET /v1/models``) > preset defaults.
         """
         if preset not in ENDPOINT_PRESETS:
             if preset == "goose":  # borrow goose's own provider/model/key
@@ -95,7 +130,13 @@ class LLMConfig:
         base_url = overrides.pop(
             "base_url", os.environ.get("OPENAI_BASE_URL") or p["base_url"]
         )
-        model = overrides.pop("model", os.environ.get("ODR_LLM_MODEL") or p["default_model"])
+        env_key = os.environ.get(api_key_env) if api_key_env else None
+        model = overrides.pop(
+            "model",
+            os.environ.get("ODR_LLM_MODEL")
+            or _default_model(base_url, env_key)
+            or p["default_model"],
+        )
         cfg = cls(
             base_url=base_url,
             model=model,
@@ -122,10 +163,14 @@ class LLMConfig:
             if os.environ.get("ODR_LLM_MODEL"):
                 overrides["model"] = os.environ["ODR_LLM_MODEL"]
             return cls.from_preset(preset, **overrides)
+        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        api_key = os.environ.get("OPENAI_API_KEY")
         return cls(
-            base_url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            api_key=os.environ.get("OPENAI_API_KEY"),
-            model=os.environ.get("ODR_LLM_MODEL", "gpt-4o-mini"),
+            base_url=base_url,
+            api_key=api_key,
+            model=os.environ.get("ODR_LLM_MODEL")
+            or _default_model(base_url, api_key)
+            or "gpt-4o-mini",
         )
 
 
