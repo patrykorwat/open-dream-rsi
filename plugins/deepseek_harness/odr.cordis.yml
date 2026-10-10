@@ -1,0 +1,36 @@
+# ODR (open-dream-rsi) MCP server for DeepSeek Harness — local stdio.
+# Apply one-shot:  dsh --patch /ABS/PATH/TO/this/file web
+# Persist: merge the - insert: entry into $DSH_HOME/profiles/web/cordis.patch.yml
+# (do NOT overwrite an existing patch file — it may hold unrelated patches).
+#
+# Point --tasks/--memory at ABSOLUTE paths. DSH spawns the child with a
+# scrubbed environment (names matching KEY|PASSWORD|SECRET|TOKEN and all
+# DSH_* are dropped), so OPENAI_* / ODR_LLM_* are re-passed explicitly below.
+- insert:
+    - id: mcp-open-dream-rsi
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: open_dream_rsi
+        transport: stdio
+        command: python3
+        args:
+          - '-m'
+          - 'open_dream_rsi'
+          - 'mcp'
+          - '--tasks'
+          - '/ABSOLUTE/PATH/projects/myproject/tasks.json'
+          - '--memory'
+          - '/ABSOLUTE/PATH/projects/myproject/.dream_rsi'
+        env:
+          OPENAI_BASE_URL: !!js process.env.OPENAI_BASE_URL || ''
+          OPENAI_API_KEY: !!js process.env.OPENAI_API_KEY || ''
+          ODR_LLM_MODEL: !!js process.env.ODR_LLM_MODEL || ''
+          ODR_LLM_PRESET: !!js process.env.ODR_LLM_PRESET || ''
+          # Running from a checkout (no pip install): the outer shell's
+          # PYTHONPATH pointing at the open-dream-rsi repo survives here.
+          PYTHONPATH: !!js process.env.PYTHONPATH || ''
+        cwd: !!js process.cwd()
+        # ODR improvement cycles (odr_run_once, odr_dream) run for many
+        # minutes — the 60 s default per-call timeout would kill them
+        # mid-cycle. 30 min covers a budget-100 cycle with headroom.
+        toolCallTimeoutMs: 1800000

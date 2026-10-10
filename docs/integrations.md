@@ -406,6 +406,36 @@ share it between the MCP server and a long-running
 has learned (that is the recommended setup: the daemon dreams, the harness
 queries).
 
+### DeepSeek Harness
+
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`)
+runs external MCP servers through its first-party bridge
+(`@deepseek-ai/dsh-mcp-client`) — the adapter is a Cordis overlay, no
+extra code:
+
+```bash
+dsh --patch /ABS/PATH/TO/open-dream-rsi/plugins/deepseek_harness/odr.cordis.yml web
+```
+
+The overlay starts `python3 -m open_dream_rsi mcp --tasks … --memory …` as
+a stdio child and the tools appear as `mcp__open_dream_rsi__<tool>`. DSH
+spawns the child with a scrubbed environment (names matching
+`KEY|PASSWORD|SECRET|TOKEN` and all `DSH_*`), so the overlay re-passes
+`OPENAI_BASE_URL` / `OPENAI_API_KEY` / `ODR_LLM_*` from the harness
+process's env explicitly — without them the dreamer falls back to
+`http://127.0.0.1:8000/v1` with model auto-detection (fine for a local
+vLLM/Ollama, needs no key). `toolCallTimeoutMs: 1800000` replaces the 60 s
+default because `odr_run_once`/`odr_dream` cycles run for many minutes.
+Edit the two `/ABSOLUTE/PATH/...` placeholders to your project first. To
+persist the layer, merge the entry into
+`$DSH_HOME/profiles/web/cordis.patch.yml` (do not overwrite that file — it
+may already hold unrelated patches); verify with
+`dsh --patch … --dump-config`. A remote variant
+(`odr-http.cordis.yml`, Streamable HTTP) points at the
+`mcp --http` endpoint — the URL is a credential, same caveat as the Cowork
+section above. Full walkthrough:
+[plugins/deepseek_harness/README.md](../plugins/deepseek_harness/README.md).
+
 ## Troubleshooting
 
 - **Server shows "failed/unknown" in the harness** — run the command manually

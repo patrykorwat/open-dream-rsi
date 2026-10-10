@@ -1,0 +1,19 @@
+# ODR (open-dream-rsi) MCP server for DeepSeek Harness — remote Streamable HTTP.
+# Serve the endpoint first:
+#   python3 -m open_dream_rsi mcp --http --host 0.0.0.0 --port 8800 \
+#       --tasks /ABS/PATH/tasks.json --memory /ABS/PATH/.dream_rsi
+# Then apply:  dsh --patch /ABS/PATH/TO/this/file web
+#
+# The endpoint implements the stateless Streamable-HTTP profile
+# (POST /mcp, one JSON-RPC message per request; GET /health).
+# TREAT THE URL AS A CREDENTIAL: whoever reaches it can queue tasks and
+# spend your LLM budget — put it behind a tunnel with authentication.
+- insert:
+    - id: mcp-open-dream-rsi-http
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: open_dream_rsi
+        transport: streamable-http
+        url: !!js process.env.ODR_MCP_URL || 'http://127.0.0.1:8800/mcp'
+        # Same reasoning as the stdio variant: improvement cycles run long.
+        toolCallTimeoutMs: 1800000

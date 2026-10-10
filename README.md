@@ -323,6 +323,35 @@ The endpoint implements the stateless Streamable-HTTP profile (`POST /mcp`,
 one JSON-RPC message per request; `GET /health`). **Treat the URL as a
 credential**: whoever reaches it can queue tasks and spend your LLM budget.
 
+### DeepSeek Harness
+
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`)
+runs external MCP servers through its first-party bridge
+(`@deepseek-ai/dsh-mcp-client`) — the adapter is a Cordis overlay, no
+extra code:
+
+```bash
+dsh --patch /ABS/PATH/TO/open-dream-rsi/plugins/deepseek_harness/odr.cordis.yml web
+```
+
+The overlay starts `python3 -m open_dream_rsi mcp --tasks … --memory …` as
+a stdio child and the tools appear as `mcp__open_dream_rsi__<tool>`. DSH
+spawns the child with a scrubbed environment (names matching
+`KEY|PASSWORD|SECRET|TOKEN` and all `DSH_*`), so the overlay re-passes
+`OPENAI_BASE_URL` / `OPENAI_API_KEY` / `ODR_LLM_*` from the harness
+process's env explicitly — without them the dreamer falls back to
+`http://127.0.0.1:8000/v1` with model auto-detection (fine for a local
+vLLM/Ollama, needs no key). `toolCallTimeoutMs: 1800000` replaces the 60 s
+default because `odr_run_once`/`odr_dream` cycles run for many minutes.
+Edit the two `/ABSOLUTE/PATH/...` placeholders to your project first. To
+persist the layer, merge the entry into
+`$DSH_HOME/profiles/web/cordis.patch.yml` (do not overwrite that file — it
+may already hold unrelated patches); verify with
+`dsh --patch … --dump-config`. A remote variant
+(`odr-http.cordis.yml`, Streamable HTTP) points at the
+`mcp --http` endpoint — the URL is a credential, same caveat as Cowork
+below. Full walkthrough: [plugins/deepseek_harness/README.md](plugins/deepseek_harness/README.md).
+
 ### Zero configuration (all of them)
 
 `odr_run_once` resolves the brain automatically, in this order:
@@ -705,6 +734,7 @@ works identically (`--store ./store`) — git is just the transport.
 | `odr mcp` (stdio) / `--http` | Hermes → ODR | Hermes calls `odr_run_once` / `odr_dream` / `odr_status` as tools |
 | `plugins/hermes_sentinel/` | Hermes → ODR engine | Sentinel observes tool results, annotates, gates |
 | `plugins/hermes_odr_trigger/` | Hermes → ODR engine | session-end hook spawns the detached `odr dream` cycle (no shell/cron) |
+| `plugins/deepseek_harness/` | DeepSeek Harness (`dsh`) → ODR | Cordis overlay: the ODR MCP server behind `@deepseek-ai/dsh-mcp-client` |
 | `odr sessions export/distill` | Hermes → curator | session history becomes staging lessons |
 | `odr skills export` | curator → Hermes | active lessons become discovered SKILL.md files |
 | `odr dream` | any trigger | one automated cycle: evidence → gate → ALM → skills |
@@ -803,7 +833,7 @@ dreamed-policy gauges per category and the learned recipe library.
 | `gate_replay` | offline validation of the lesson promotion rule |
 | `sentinel` | host-agnostic error-class engine + `SentinelObservation` world contract |
 | `utils.goose` | goose config resolver (CLI + desktop dialects, keychain) |
-| `plugins/*` | Hermes / Claude Code / goose adapters |
+| `plugins/*` | Hermes / Claude Code / goose / DeepSeek Harness adapters |
 | `benchmarks/travelplanner` | **the benchmark**: sandbox MCP server, episode runner, official-evaluator wrapper, split CSVs, raw published episode records |
 
 ## Tests
