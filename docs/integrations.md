@@ -69,7 +69,7 @@ or, when it is stuck on something the loop may already know:
 > "Check odr_lessons and odr_recipes for category `strutil` before you try
 > again."
 
-The five tools the agent sees:
+The six tools the agent sees:
 
 | Tool | What it does |
 |---|---|
@@ -281,7 +281,7 @@ is a benign no-op with a hint, never an error. So: register the server,
 restart the client, and the first message that says "run one Dream-RSI
 cycle" just works — no prompts to babysit, no keys to copy.
 
-The five tools are registered prefixed per client (e.g. Hermes
+The six tools are registered prefixed per client (e.g. Hermes
 `mcp_open_dream_rsi_odr_run_once`).
 
 ### Hermes Agent
