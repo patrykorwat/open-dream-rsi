@@ -79,6 +79,33 @@ class TestStdioOverlayContract(unittest.TestCase):
         self.assertNotIn("Bearer ", self.text)
 
 
+class TestBundleManifest(unittest.TestCase):
+    """npm bundle form: package.json declares dsh.bundle + the layer file."""
+
+    def setUp(self):
+        self.pkg = json.loads(
+            (_PLUGIN / "package.json").read_text(encoding="utf-8"))
+
+    def test_declares_bundle_patch(self):
+        self.assertEqual(self.pkg["name"], "dsh-open-dream-rsi")
+        self.assertEqual(self.pkg["dsh"]["bundle"]["patch"], "./cordis.patch.yml")
+        self.assertIn("cordis.patch.yml", self.pkg["files"])
+
+    def test_layer_references_inbox_bridge_by_package_name(self):
+        text = (_PLUGIN / "cordis.patch.yml").read_text(encoding="utf-8")
+        self.assertIn("- insert:", text)
+        self.assertIn("name: '@deepseek-ai/dsh-mcp-client'", text)
+        self.assertIn("toolCallTimeoutMs: 1800000", text)
+        # Bundle defaults resolve against the launch cwd — no placeholders.
+        self.assertNotIn("/ABSOLUTE/PATH/", text)
+        self.assertNotIn("/opt/data/", text)
+
+    def test_no_literal_secrets(self):
+        for text in [(_PLUGIN / "cordis.patch.yml").read_text(encoding="utf-8"),
+                     (_PLUGIN / "package.json").read_text(encoding="utf-8")]:
+            self.assertNotRegex(text, r"sk-[A-Za-z0-9]{8,}")
+
+
 class TestHttpOverlayContract(unittest.TestCase):
     def setUp(self):
         self.text = _overlay_text(HTTP_OVERLAY)

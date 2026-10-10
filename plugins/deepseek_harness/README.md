@@ -13,11 +13,45 @@ No code ships here — only two overlay files and this guide.
 ## Files
 
 | file                        | transport       | use when                                  |
-|-----------------------------|-----------------|-------------------------------------------|
+|-----------------------------|-----------------|--------------------------------------------|
 | `odr.cordis.yml`            | stdio           | DSH and the ODR checkout on one machine    |
 | `odr-http.cordis.yml`       | streamable-http | ODR served remotely (tunnel / other host)  |
+| `cordis.patch.yml` + `package.json` | bundle (npm) | installable `dsh plugin add` package    |
 
-## Install (stdio)
+The npm bundle (`dsh-open-dream-rsi`) contains no code: its layer inserts the
+in-box `@deepseek-ai/dsh-mcp-client` row, so nothing is built and no build
+allowance is needed even for git installs. Bundle defaults resolve
+`tasks.json` / `.dream_rsi` beside the directory `dsh` launches from;
+override the `mcp-open-dream-rsi` row from your profile's `cordis.patch.yml`
+(same id — a config override replaces the whole config).
+
+## Install as a bundle (`dsh plugin add`)
+
+Requires `pip install open-dream-rsi` (or `PYTHONPATH` exported at launch —
+the bundle re-passes it). From a directory holding your `tasks.json`:
+
+```bash
+# from the npm registry (after `npm publish`), a tarball, a checkout,
+# or straight from GitHub — pick one:
+dsh plugin --profile <name> add dsh-open-dream-rsi
+dsh plugin --profile <name> add /path/to/dsh-open-dream-rsi-0.1.0.tgz
+dsh plugin --profile <name> add /path/to/open-dream-rsi/plugins/deepseek_harness
+dsh plugin --profile <name> add github:patrykorwat/open-dream-rsi#path:plugins/deepseek_harness
+
+dsh --profile <name> --dump-config    # shows the "# == dsh-open-dream-rsi" layer
+```
+
+Git installs fetch sources; this bundle needs no build step and no build
+allowance. Pin a commit so a later push cannot silently change what runs:
+
+```bash
+dsh plugin --profile <name> add "github:patrykorwat/open-dream-rsi#<sha>&path:plugins/deepseek_harness"
+```
+
+(The pin must point at a commit that already contains this directory —
+pnpm fetches sources, not releases.)
+
+## Install (stdio, `--patch` overlay)
 
 1. Make the server importable: `pip install open-dream-rsi`, or export
    `PYTHONPATH=<ODR checkout>` in the overlay's `env:` block.

@@ -1,0 +1,30 @@
+{
+  "name": "dsh-open-dream-rsi",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness bundle: run the open-dream-rsi (ODR) self-improvement loop as mcp__open_dream_rsi__* tools",
+  "type": "module",
+  "license": "MIT",
+  "author": "patrykorwat",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/patrykorwat/open-dream-rsi.git",
+    "directory": "plugins/deepseek_harness"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "mcp",
+    "mcp-server",
+    "open-dream-rsi",
+    "self-improvement",
+    "agent"
+  ],
+  "files": [
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
