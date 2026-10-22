@@ -28,16 +28,6 @@ jobs:
         run: |
           set -o pipefail
           python -m unittest discover -s tests 2>&1 | tail -20
-      - name: Test count matches the README badge
-        run: |
-          set -o pipefail
-          BADGE=$(grep -oP 'badge/tests-\K[0-9]+' README.md)
-          COUNT=$(python -c "import unittest; print(unittest.TestLoader().discover('tests').countTestCases())")
-          echo "badge=$BADGE discovered=$COUNT"
-          test "$BADGE" = "$COUNT" || {
-            echo "::error::README test badge ($BADGE) does not match the discovered test count ($COUNT) — bump the badge in the same commit."
-            exit 1
-          }
 
   lint:
     name: Lint + vendored-copy drift

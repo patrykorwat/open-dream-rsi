@@ -104,9 +104,9 @@ def collect(memory_root: "str | Path", hours: Optional[float] = None) -> Dict[st
             for line in fh:
                 if " fire:" not in line:
                     continue
-                ts = line.split(" ", 1)[0]
+                raw_ts = line.split(" ", 1)[0]
                 try:
-                    ts = float(ts)
+                    ts = float(raw_ts)
                 except ValueError:
                     ts = 0.0
                 if cutoff is not None and ts < cutoff:

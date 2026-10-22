@@ -3,7 +3,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![CI](https://github.com/patrykorwat/open-dream-rsi/actions/workflows/ci.yml/badge.svg)](https://github.com/patrykorwat/open-dream-rsi/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-397%20passing-brightgreen)](tests/)
 [![PyPI](https://img.shields.io/pypi/v/open-dream-rsi)](https://pypi.org/project/open-dream-rsi/)
 
 ## What is this?
@@ -447,8 +446,7 @@ python -m unittest discover -s tests      # full suite, ~2 min
 python scripts/fast_tests.py              # fast subset (slow bench/sandbox modules excluded), ~15 s
 ```
 
-397 tests at this commit, re-counted by CI on every push (the badge above
-shows the last green run, not a live count). Stdlib-only: benchmark
+Stdlib-only: benchmark
 behavioural contracts
 (greedy must solve nothing; the gated arm must dominate ε; the rollout must
 be prefix-only), sandbox escape regressions, sandbox result-cache identity
