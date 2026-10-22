@@ -5,7 +5,10 @@ Run:  python -m unittest discover -s tests
 """
 
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -95,6 +98,37 @@ class TestDreamOnce(unittest.TestCase):
             _release(lock)
         report = dream_once(self.mem, client=None)
         self.assertFalse(report["skipped"])
+
+    def _write_lock(self, pid: int, age_seconds: float = 0.0) -> Path:
+        lock = self.mem / "dream.lock"
+        self.mem.mkdir(parents=True, exist_ok=True)
+        lock.write_text(str(pid))
+        past = time.time() - age_seconds
+        os.utime(lock, (past, past))
+        return lock
+
+    def test_live_owner_is_never_stale_regardless_of_age(self):
+        # A full cycle legitimately outlives LOCK_TIMEOUT_S: the next fire
+        # must NOT steal the lock of a live owner (the age-first order once
+        # produced two concurrent dreams on one memory dir).
+        self._write_lock(os.getpid(), age_seconds=10 * 3600)
+        self.assertIsNone(_acquire(self.mem))
+
+    def test_dead_owner_pid_is_reclaimed_even_when_fresh(self):
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        proc.wait()  # reaped: this PID is guaranteed gone
+        self._write_lock(proc.pid, age_seconds=0.0)
+        lock = _acquire(self.mem)
+        self.assertIsNotNone(lock)
+        _release(lock)
+
+    def test_release_never_removes_a_foreign_lock(self):
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        proc.wait()
+        lock = self._write_lock(proc.pid)
+        _release(lock)  # our PID does not own it: must survive
+        self.assertTrue(lock.exists())
+        lock.unlink()
 
     def test_probe_tasks_queued_from_failure_sessions(self):
         from open_dream_rsi.memory import DreamMemory

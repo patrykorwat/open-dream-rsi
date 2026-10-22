@@ -43,27 +43,43 @@ LOCK_TIMEOUT_S = 30 * 60
 # -- single-instance lock -----------------------------------------------------
 
 def _acquire(memory_root: Path) -> Optional[Path]:
-    """Atomic lock; a crashed run's lock is reclaimed after LOCK_TIMEOUT_S."""
+    """Atomic lock; a crashed run's lock is reclaimed after LOCK_TIMEOUT_S.
+
+    Owner liveness is checked BEFORE the lock's age: a live owner is never
+    stale. A full cycle legitimately runs longer than LOCK_TIMEOUT_S, and
+    the age-first order let the next fire steal the lock mid-run — two
+    dreams racing on one memory dir (double API spend, last-writer-wins on
+    the stores). The age timeout only covers locks whose owner PID is gone
+    or unreadable (crash before the PID write, corrupt file).
+    """
     lock = memory_root / "dream.lock"
     memory_root.mkdir(parents=True, exist_ok=True)
     try:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
+        stale = False
         try:
-            stale = time.time() - lock.stat().st_mtime > LOCK_TIMEOUT_S
-            if not stale:  # owner crashed without releasing: dead pid?
-                try:
-                    owner = int(lock.read_text().strip())
-                    os.kill(owner, 0)  # raises if gone
-                except (ValueError, ProcessLookupError):
-                    stale = True
-                except PermissionError:
-                    pass  # alive, just not ours
-            if stale:
-                lock.unlink(missing_ok=True)
-                return _acquire(memory_root)
-        except OSError:
-            pass
+            owner = int(lock.read_text().strip())
+        except (ValueError, OSError):
+            owner = None
+        if owner is not None:
+            try:
+                os.kill(owner, 0)  # raises when the owner is gone
+                return None  # alive -> never stale
+            except ProcessLookupError:
+                stale = True  # PID gone: crashed run
+            except PermissionError:
+                return None  # alive, just not ours
+        if not stale:
+            try:
+                stale = time.time() - lock.stat().st_mtime > LOCK_TIMEOUT_S
+            except OSError:
+                stale = False
+        if stale:
+            lock.unlink(missing_ok=True)
+            return _acquire(memory_root)
+        return None
+    except OSError:
         return None
     os.write(fd, str(os.getpid()).encode())
     os.close(fd)
@@ -71,11 +87,23 @@ def _acquire(memory_root: Path) -> Optional[Path]:
 
 
 def _release(lock: Optional[Path]) -> None:
-    if lock is not None:
-        try:
-            lock.unlink(missing_ok=True)
-        except OSError:
-            pass
+    """Remove the lock only if we still own it.
+
+    A stolen lock must survive the dispossessed owner's cleanup: otherwise
+    the moment the old run finished, the thief's exclusivity would break
+    and a third fire could walk in.
+    """
+    if lock is None:
+        return
+    try:
+        if int(lock.read_text().strip()) != os.getpid():
+            return  # the lock was stolen while we ran — leave it
+    except (ValueError, OSError):
+        return  # unreadable/already gone: a fresh _acquire will judge it
+    try:
+        lock.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _state_path(memory_root: Path) -> Path:
