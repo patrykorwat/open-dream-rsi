@@ -248,6 +248,7 @@ def tool_odr_dream(args: Dict[str, Any]) -> Dict[str, Any]:
         category=args.get("category"),
         min_new_evidence=int(args.get("min_new_evidence", 3)),
         max_age_seconds=float(args.get("max_age_seconds", 6 * 3600)),
+        wake=args.get("wake"),
     )
 
 
@@ -364,8 +365,12 @@ TOOLS: Dict[str, Dict[str, Any]] = {
                                 "description": "force a full dream at least "
                                                "this often (default 21600)"},
             "min_new_evidence": {"type": "integer",
-                                 "description": "full dream when this many "
-                                                "new sessions arrive (default 3)"}}},
+                                "description": "full dream when this many "
+                                               "new sessions arrive (default 3)"},
+            "wake": {"type": "boolean",
+                     "description": "on a FULL dream with an empty task "
+                                    "queue, seed the endpoint self-test "
+                                    "probe (default ODR_WAKE, on)"}}},
         "fn": tool_odr_dream,
     },
 }

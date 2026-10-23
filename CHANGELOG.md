@@ -4,6 +4,19 @@ All notable changes to `open-dream-rsi` are documented here. Versions 0.3.0 and
 earlier are summarized from the commit history; the full log is the source of
 truth.
 
+## [0.3.11] — 2026-10-23
+
+### Added
+- **Wake self-test** (`odr dream --wake`, MCP `odr_dream.wake`, env
+  `ODR_WAKE`, default on): a FULL dream that finds the task queue empty
+  seeds a one-shot `wake:selftest` probe — "write `add(a, b)`", verified
+  by TESTS (never the judge), `max_attempts=1` — so an idle deployment
+  still exercises its configured LLM endpoint once per full dream.
+  `odr metrics` then shows real `api_calls` and a live solve rate
+  (category `wake`) instead of a silent zero-call heartbeat. The probe
+  never touches `tasks.json` and never displaces real work; opt out per
+  deployment with `ODR_WAKE=0` or per call with `--no-wake`.
+
 ## [0.3.10] — 2026-10-22
 
 ### Added

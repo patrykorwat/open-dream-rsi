@@ -212,6 +212,41 @@ def _cap_probe_queue(memory_root: Path) -> int:
     return len(drop)
 
 
+# -- wake self-test ------------------------------------------------------------
+
+#: Task id of the endpoint self-test probe. Fixed ON PURPOSE: dedup by id
+#: means the probe never accumulates in the queue — the same single task is
+#: simply re-attempted (max_attempts=1) by every full dream that finds the
+#: queue otherwise empty.
+WAKE_TASK_ID = "wake:selftest"
+
+_WAKE_PROMPT = (
+    "Endpoint self-test (odr wake): write a Python function add(a, b) that "
+    "returns the sum of its two arguments."
+)
+_WAKE_TESTS = ({"call": "add(2, 3)", "expected": 5},
+               {"call": "add(-1, 1)", "expected": 0})
+
+
+def wake_task(category: Optional[str] = None) -> Dict[str, Any]:
+    """The wake self-test as a task dict: solvable by any competent model,
+    verified by TESTS (never the judge), one attempt per full dream —
+    i.e. one real API call against the configured endpoint."""
+    return {"task_id": WAKE_TASK_ID, "category": category or "wake",
+            "prompt": _WAKE_PROMPT,
+            "tests": [dict(t) for t in _WAKE_TESTS],
+            "max_attempts": 1}
+
+
+def wake_enabled(flag: Optional[bool] = None) -> bool:
+    """Resolve the wake switch: an explicit flag wins, otherwise the
+    ``ODR_WAKE`` env var decides (default ON — an idle deployment should
+    still exercise its endpoint once per full dream)."""
+    if flag is not None:
+        return bool(flag)
+    return os.environ.get("ODR_WAKE", "1").lower() not in ("0", "false", "no")
+
+
 def ingest_sessions(memory, sessions_db: "str | Path", *,
                     source: str = "hermes",
                     limit: int = 25, client=None,
@@ -339,8 +374,15 @@ def dream_once(memory_root: "str | Path", *,
                budget: int = 100, max_tokens: int = 100_000,
                category: Optional[str] = None,
                min_new_evidence: int = DEFAULT_MIN_NEW_EVIDENCE,
-               max_age_seconds: float = DEFAULT_MAX_AGE_SECONDS) -> Dict[str, Any]:
-    """Run one automated cycle. A concurrent run returns {'skipped': True}."""
+               max_age_seconds: float = DEFAULT_MAX_AGE_SECONDS,
+               wake: Optional[bool] = None) -> Dict[str, Any]:
+    """Run one automated cycle. A concurrent run returns {'skipped': True}.
+
+    ``wake`` (default: the ``ODR_WAKE`` env var, on) seeds the endpoint
+    self-test probe when a FULL dream finds the task queue empty, so an
+    idle deployment still exercises its LLM once per full dream and
+    ``odr metrics`` shows real api_calls instead of a silent heartbeat.
+    """
     from open_dream_rsi.memory import DreamMemory
     from open_dream_rsi.sessions import lessons_to_skills
 
@@ -370,6 +412,15 @@ def dream_once(memory_root: "str | Path", *,
             from open_dream_rsi.loop import Task
             tasks = ([Task(**t) for t in json.loads(tp.read_text())]
                      if tp.exists() else [])
+            if (full and not tasks and wake_enabled(wake)
+                    and client is not None):
+                # Idle deployment: seed the endpoint self-test so a FULL
+                # dream always exercises the configured LLM once —
+                # ``odr metrics`` shows real api_calls instead of a silent
+                # heartbeat. Never replaces real work (an empty queue is
+                # the precondition) and the fixed task_id dedups it.
+                tasks = [Task(**wake_task(category))]
+                report["wake"] = True
         if client is None:
             from open_dream_rsi.llm import StubClient
             run_client = StubClient()

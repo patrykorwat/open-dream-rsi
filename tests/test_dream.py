@@ -318,5 +318,86 @@ class QueueCliTests(unittest.TestCase):
                                      "prompt": "p"})
 
 
+class _SolveLLM:
+    """Returns a correct add(a, b) implementation — solves the wake probe."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def chat(self, messages, model=None, temperature=0.7, max_tokens=1024):
+        self.calls += 1
+        return "```python\ndef add(a, b):\n    return a + b\n```"
+
+
+class WakeTests(unittest.TestCase):
+    """The wake self-test: an idle FULL dream still exercises the endpoint."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.mem = self.tmp / "mem"
+        self.mem.mkdir()
+
+    def test_full_dream_with_empty_queue_seeds_wake_probe(self):
+        report = dream_once(self.mem, client=_SolveLLM(), max_age_seconds=0)
+        self.assertTrue(report["wake"])
+        cycle = report["cycle"]
+        self.assertEqual(cycle["tasks_attempted"], 1)
+        self.assertEqual(cycle["api_calls"], 1)
+        # tasks.json is never touched by the wake seed
+        self.assertFalse((self.mem / "tasks.json").exists())
+        events = [json.loads(line) for line
+                  in (self.mem / "events.jsonl").read_text().splitlines()
+                  if line.strip()]
+        solved = [e for e in events
+                  if e.get("kind") == "task" and e.get("solved")]
+        self.assertEqual(len(solved), 1)
+        self.assertEqual(solved[0]["category"], "wake")
+
+    def test_wake_flag_off_disables_the_seed(self):
+        report = dream_once(self.mem, client=_SolveLLM(),
+                            max_age_seconds=0, wake=False)
+        self.assertNotIn("wake", report)
+        self.assertEqual(report["cycle"]["api_calls"], 0)
+
+    def test_wake_env_opt_out(self):
+        old = os.environ.get("ODR_WAKE")
+        os.environ["ODR_WAKE"] = "0"
+        try:
+            report = dream_once(self.mem, client=_SolveLLM(),
+                                max_age_seconds=0)
+        finally:
+            if old is None:
+                os.environ.pop("ODR_WAKE", None)
+            else:
+                os.environ["ODR_WAKE"] = old
+        self.assertNotIn("wake", report)
+
+    def test_wake_never_replaces_a_nonempty_queue(self):
+        from open_dream_rsi.loop import append_task
+        append_task(self.mem / "tasks.json",
+                    {"task_id": "manual-1", "category": "demo",
+                     "prompt": "p", "criteria": "c"})
+        report = dream_once(self.mem, client=_SolveLLM(), max_age_seconds=0)
+        self.assertNotIn("wake", report)
+        queue = json.loads((self.mem / "tasks.json").read_text())
+        self.assertEqual([t["task_id"] for t in queue], ["manual-1"])
+
+    def test_wake_fires_only_on_a_full_tier(self):
+        dream_once(self.mem, client=_SolveLLM(), max_age_seconds=0)
+        # second immediate call: maintenance tier (fresh last_full_dream,
+        # no new evidence; a positive max-age keeps the tier cheap) —
+        # wake must not fire off-tier
+        report = dream_once(self.mem, client=_JunkLLM(), max_age_seconds=3600)
+        self.assertEqual(report["tier"], "maintenance")
+        self.assertNotIn("wake", report)
+        self.assertEqual(report["cycle"]["api_calls"], 0)
+
+    def test_wake_never_fires_without_a_real_client(self):
+        # client=None -> StubClient path (offline/mock): zero-spend promise
+        report = dream_once(self.mem, client=None, max_age_seconds=0)
+        self.assertNotIn("wake", report)
+        self.assertEqual(report["cycle"]["api_calls"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

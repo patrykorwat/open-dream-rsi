@@ -233,6 +233,14 @@ automatically**: every failure-shaped session appends its *own request* to
 manual tasks), so the promotion gate never depends on hand-written task
 files — the evidence you already produced is the counterparty.
 
+**An idle fleet is never fully idle (wake self-test).** By default
+(`ODR_WAKE=1`, or `--wake`) a FULL dream that finds `tasks.json` empty
+seeds one self-test probe — "write `add(a, b)`", verified by tests, one
+API call — so the configured endpoint is exercised even with no real
+work queued. `odr metrics` then shows live `api_calls` and a solve rate
+(category `wake`) instead of a zero-call heartbeat; opt out with
+`ODR_WAKE=0` or `--no-wake`.
+
 For a mass install the whole thing is two commands, no host glue:
 
 ```bash

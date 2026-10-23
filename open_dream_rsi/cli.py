@@ -275,7 +275,7 @@ def cmd_dream(args: argparse.Namespace) -> int:
         args.memory, sessions_db=sessions_db, session_source=args.source,
         skills_out=args.skills_out,
         client=client, budget=args.budget, max_tokens=args.max_tokens,
-        category=args.category)
+        category=args.category, wake=args.wake)
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
 
@@ -507,6 +507,12 @@ def main(argv: list[str] | None = None) -> int:
     dr.add_argument("--budget", type=int, default=100,
                     help="max API calls for a FULL dream (default 100)")
     dr.add_argument("--max-tokens", type=int, default=100_000)
+    dr.add_argument("--wake", dest="wake", action="store_true", default=None,
+                    help="on a FULL dream with an empty task queue, seed the "
+                         "endpoint self-test probe (one real API call; "
+                         "default: ODR_WAKE, on)")
+    dr.add_argument("--no-wake", dest="wake", action="store_false",
+                    help="disable the wake self-test seed")
     dr.add_argument("--offline", action="store_true",
                     help="no LLM: lifecycle maintenance only")
     dr.set_defaults(func=cmd_dream)
