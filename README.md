@@ -252,6 +252,52 @@ hermes config set plugins.entries.odr-trigger.settings.provider local
 hermes config set plugins.entries.odr-trigger.settings.base_url http://.../v1
 ```
 
+## Fleet deployments: many workspaces, one timer
+
+A timer-based fleet is one runner called by one service. The shipped runner
+loops a glob of per-workspace memory dirs and fires one dream cycle per dir:
+
+```bash
+scripts/odr_fleet_dream.sh   # env-configured; see the header for ODR_* knobs
+```
+
+A systemd oneshot unit + timer (or the per-host service you already run) calls
+it; the dream module itself decides maintenance vs full per workspace:
+
+```ini
+# /etc/systemd/system/odr-dream.service  (Type=oneshot)
+[Service]
+Type=oneshot
+Environment=ODR_PKG=/opt/odr/share/open-dream-rsi
+Environment=ODR_WS_GLOB=/opt/odr/workspaces/*/odr-mem
+Environment=ODR_SOURCE=cursor
+Environment=ODR_PROVIDER=cursor-agent
+ExecStart=/opt/odr/share/open-dream-rsi/scripts/odr_fleet_dream.sh
+
+# odr-dream.timer — fires the unit on your cadence (here: every 2 h)
+[Timer]
+OnCalendar=*-*-* 0/2:17:00
+[Install]
+WantedBy=timers.target
+```
+
+What separates a *learning* fleet from a heartbeat-only one is carried by the
+runner's environment — three ingredients:
+
+| ingredient | switch | without it |
+|---|---|---|
+| evidence ingest | `ODR_SOURCE=cursor` (or `hermes` + `ODR_SESSIONS_DB`) | sessions are never read; the KB stays empty forever |
+| a real dreamer | `ODR_PROVIDER=cursor-agent` (CLI), or `openai`/`local` + `ODR_ENV_FILE` | full dreams attempt nothing; before 0.3.11 this was invisible |
+| the workspace glob | `ODR_WS_GLOB` (one memory dir per workspace) | — |
+
+Since 0.3.11 the wake self-test closes the visibility gap: every FULL dream
+with an empty queue exercises the configured endpoint once, so a correct
+fleet reads `wake: n/n` and ~1 API call per workspace per ~6 h in
+`odr metrics`. A fleet stuck at `api_calls: 0` across sweeps is a timer
+running bare dream calls — fix the table above, then diagnose one workspace
+with `odr --memory <dir> metrics` (the `llm errors` classes name the missing
+env). `ODR_INGEST=0` keeps the heartbeat-only behavior explicitly.
+
 ---
 
 ## Results (evaluation moved to docs/benchmarks.md)

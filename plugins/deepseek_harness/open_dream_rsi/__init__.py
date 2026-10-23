@@ -46,7 +46,7 @@ from open_dream_rsi.bench_policy import (
     run_policy_benchmark,
 )
 
-__version__ = "0.3.11"
+__version__ = "0.3.12"
 
 __all__ = [
     "DiscoveryTree",

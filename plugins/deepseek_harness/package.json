@@ -1,6 +1,6 @@
 {
   "name": "dsh-open-dream-rsi",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "description": "Let your coding agent dream: strategies must survive counterfactual replay before they earn trust. An offline self-improvement loop over an evolving world model \u2014 no fine-tuning, the LLM stays frozen. Speaks MCP. Ships its Python server inside the package \u2014 the only requirement is a system python3 (3.10+) on PATH \u2014 and the plugin's bridge serves the dreamer's LLM calls from the model your harness is already configured with (no API keys, no env, no extra endpoints).",
   "type": "module",
   "license": "MIT",

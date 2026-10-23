@@ -4,6 +4,18 @@ All notable changes to `open-dream-rsi` are documented here. Versions 0.3.0 and
 earlier are summarized from the commit history; the full log is the source of
 truth.
 
+## [0.3.12] — 2026-10-23
+
+### Added
+- **Fleet runner** (`scripts/odr_fleet_dream.sh`): env-configured loop that
+  fires one `odr dream` cycle per memory dir matching `ODR_WS_GLOB`, with the
+  LLM env merged from `ODR_ENV_FILE`. The timer half of a service-based fleet
+  deployment (systemd oneshot unit + timer, or any cron line); per-workspace
+  cadence still lives inside the dream module. Documented in the new README
+  section "Fleet deployments", which also names the three ingredients that
+  separate a learning fleet from a heartbeat-only one (`ODR_SOURCE`, a real
+  `ODR_PROVIDER`, the workspace glob).
+
 ## [0.3.11] — 2026-10-23
 
 ### Added
