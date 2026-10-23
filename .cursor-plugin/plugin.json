@@ -1,7 +1,7 @@
 {
   "name": "open-dream-rsi",
   "description": "Dream-RSI learning loop for Cursor: sentinel error-recurrence notes and end-of-session dream cycles fed by Cursor chats. Brains default to the cursor-agent CLI (your Cursor login) \u2014 no MCP, no proxy, no API keys.",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "author": {
     "name": "Patryk Orwat"
   },
