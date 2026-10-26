@@ -4,6 +4,24 @@ All notable changes to `open-dream-rsi` are documented here. Versions 0.3.0 and
 earlier are summarized from the commit history; the full log is the source of
 truth.
 
+## [0.3.13] — 2026-10-25
+
+### Added
+- **Retry with exponential backoff + full jitter** on transient LLM failures
+  (connection refused/reset/remote closed, HTTP 429/5xx). Generation timeouts
+  are NOT retried by default — each timed-out attempt already burned the full
+  call timeout, and on a saturated shared endpoint blind timeout retries just
+  multiply wall clock (`ODR_LLM_RETRY_TIMEOUTS=1` opts in). Tunables:
+  `ODR_LLM_RETRIES` (default 3), `ODR_LLM_BACKOFF` (base seconds, default 5),
+  `ODR_LLM_BACKOFF_MAX` (cap, default 120). Error messages keep the
+  classification substrings ("timed out", "Could not connect") so
+  `odr metrics` buckets stay stable.
+- **Token usage accounting**: the client accumulates the OpenAI `usage`
+  blocks (`usage_total`/`last_usage`); the loop logs a per-cycle
+  `tokens` delta into `cycle` events; `odr metrics` reports
+  `tokens: prompt / completion / total (N instrumented cycles)` and renders
+  "not instrumented" for pre-0.3.13 history instead of a misleading zero.
+
 ## [0.3.12] — 2026-10-23
 
 ### Added

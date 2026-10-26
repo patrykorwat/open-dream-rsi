@@ -22,7 +22,9 @@ class MetricsCollectTest(unittest.TestCase):
             _write_events(root / "events.jsonl", [
                 {"ts": now - 60, "kind": "cycle", "api_calls": 5,
                  "tasks_attempted": 2, "tasks_solved": 1,
-                 "stopped_reason": "api_budget_exhausted"},
+                 "stopped_reason": "api_budget_exhausted",
+                 "tokens": {"prompt_tokens": 1200, "completion_tokens": 300,
+                            "total_tokens": 1500}},
                 {"ts": now - 50, "kind": "task", "category": "cat", "solved": True},
                 {"ts": now - 40, "kind": "task", "category": "cat", "solved": False},
                 {"ts": now - 30, "kind": "llm_error", "error": "timed out"},
@@ -59,6 +61,10 @@ class MetricsCollectTest(unittest.TestCase):
             self.assertIsNotNone(m["backlog"]["hours_since_full_dream"])
             self.assertEqual(m["trigger"]["fires"], 1)  # old fire outside the window
             self.assertEqual(m["trigger"]["last_budget"], 300)
+            self.assertEqual(m["tokens"], {"prompt": 1200, "completion": 300,
+                                           "cycles_with_usage": 1})
+            text = format_metrics(m)
+            self.assertIn("tokens: prompt 1,200  completion 300", text)
 
     def test_empty_memory_dir_degrades_to_zeros(self):
         with TemporaryDirectory() as tmp:
@@ -69,6 +75,7 @@ class MetricsCollectTest(unittest.TestCase):
             self.assertIsNone(m["backlog"]["hours_since_full_dream"])
             text = format_metrics(m)  # must render, not raise
             self.assertIn("cycles: 0", text)
+            self.assertIn("not instrumented", text)  # no token usage recorded
 
     def test_format_flags_zero_solve_categories(self):
         data = {"window_hours": 24,

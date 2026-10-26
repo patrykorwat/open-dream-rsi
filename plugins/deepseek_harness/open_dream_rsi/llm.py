@@ -20,6 +20,9 @@ from __future__ import annotations
 
 import json
 import os
+import random
+import socket
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -33,6 +36,23 @@ DEFAULT_TIMEOUT = float(os.environ.get("ODR_LLM_TIMEOUT", "900.0"))
 
 #: Model discovery GET timeout (the /models listing must never stall a run).
 _DISCOVERY_TIMEOUT = 30.0
+
+#: Transient-failure retries with exponential backoff + jitter. Retried:
+#: connection errors (refused/reset/remote closed) and 429/5xx responses.
+#: Generation timeouts are NOT retried by default — each timed-out attempt
+#: already consumed the full call timeout, and on a saturated shared endpoint
+#: blind timeout retries just multiply wall clock (ODR_LLM_RETRY_TIMEOUTS=1
+#: opts in). Tune attempts/pacing with ODR_LLM_RETRIES / ODR_LLM_BACKOFF.
+MAX_RETRIES = int(os.environ.get("ODR_LLM_RETRIES", "3"))
+BACKOFF_BASE = float(os.environ.get("ODR_LLM_BACKOFF", "5.0"))
+BACKOFF_MAX = float(os.environ.get("ODR_LLM_BACKOFF_MAX", "120.0"))
+RETRY_TIMEOUTS = os.environ.get("ODR_LLM_RETRY_TIMEOUTS", "") == "1"
+
+
+def _retry_delay(attempt: int) -> float:
+    """Full-jitter exponential backoff: ``base * 2**attempt`` capped, 0.5x..1.5x."""
+    base = min(BACKOFF_BASE * (2 ** max(0, attempt)), BACKOFF_MAX)
+    return base * (0.5 + random.random())
 
 
 def _default_model(base_url: str, api_key: Optional[str]) -> Optional[str]:
@@ -198,6 +218,11 @@ class OpenAICompatibleClient:
 
     def __init__(self, config: Optional[LLMConfig] = None):
         self.config = config or LLMConfig.from_env()
+        #: Cumulative token usage across calls (from the OpenAI ``usage``
+        #: response block). The loop logs per-cycle deltas into ``cycle``
+        #: events so metrics can report burned tokens.
+        self.usage_total: Dict[str, int] = {}
+        self.last_usage: Optional[Dict[str, int]] = None
 
     # -- public API -------------------------------------------------------------
 
@@ -287,17 +312,62 @@ class OpenAICompatibleClient:
             "Authorization": f"Bearer {self.config.api_key}",
             **self.config.extra_headers,
         }
-        req = urllib.request.Request(
-            url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST"
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")[:500]
-            raise LLMError(f"HTTP {exc.code} from {url}: {body}") from exc
-        except urllib.error.URLError as exc:
-            raise LLMError(f"Could not connect to {url}: {exc.reason}") from exc
+        body = json.dumps(payload).encode("utf-8")
+        last: Optional[LLMError] = None
+        for attempt in range(MAX_RETRIES + 1):
+            if attempt:
+                time.sleep(_retry_delay(attempt - 1))
+            req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+            except (TimeoutError, socket.timeout) as exc:
+                # A generation that outlived the call timeout. Retrying burns
+                # the full timeout again, so it is opt-in only.
+                text = f"timed out calling {url} after {self.config.timeout:g}s"
+                if not RETRY_TIMEOUTS:
+                    raise LLMError(text) from exc
+                last = LLMError(text)
+                continue
+            except urllib.error.HTTPError as exc:
+                text = exc.read().decode("utf-8", errors="replace")[:500]
+                if exc.code == 429 or 500 <= exc.code < 600:
+                    # Rate limited / server error: retryable, back off first.
+                    last = LLMError(f"HTTP {exc.code} from {url}: {text}")
+                    continue
+                # 4xx is a bad request or dead model — no point retrying;
+                # chat()'s self-heal paths take over from here.
+                raise LLMError(f"HTTP {exc.code} from {url}: {text}") from exc
+            except urllib.error.URLError as exc:
+                reason = exc.reason
+                if isinstance(reason, (TimeoutError, socket.timeout)):
+                    text = f"timed out calling {url} after {self.config.timeout:g}s"
+                    if not RETRY_TIMEOUTS:
+                        raise LLMError(text) from exc
+                    last = LLMError(text)
+                    continue
+                # Connection refused / DNS / unreachable — retry with backoff:
+                # the endpoint is often restarting (vLLM deploys) and comes
+                # back within seconds.
+                last = LLMError(f"Could not connect to {url}: {reason}")
+                continue
+            except OSError as exc:  # connection reset, remote closed mid-call
+                last = LLMError(f"Could not connect to {url}: {exc}")
+                continue
+            self._record_usage(data)
+            return data
+        raise last or LLMError(f"Request to {url} failed")
+
+    def _record_usage(self, data: Dict[str, Any]) -> None:
+        """Accumulate token usage from the response ``usage`` block, if present."""
+        usage = data.get("usage") if isinstance(data, dict) else None
+        if not isinstance(usage, dict):
+            return
+        counts = {key: int(usage.get(key, 0) or 0)
+                  for key in ("prompt_tokens", "completion_tokens", "total_tokens")}
+        self.last_usage = counts
+        for key, value in counts.items():
+            self.usage_total[key] = self.usage_total.get(key, 0) + value
 
 
 class StubClient:

@@ -63,6 +63,7 @@ def collect(memory_root: "str | Path", hours: Optional[float] = None) -> Dict[st
     corrections = 0
     fires = 0
     last_budget: Optional[int] = None
+    tokens_prompt = tokens_completion = tokens_cycles = 0
 
     events = root / "events.jsonl"
     if events.exists():
@@ -81,6 +82,11 @@ def collect(memory_root: "str | Path", hours: Optional[float] = None) -> Dict[st
                 kind = e.get("kind")
                 if kind == "cycle":
                     cycles.append(e)
+                    t = e.get("tokens")
+                    if isinstance(t, dict) and t.get("total_tokens"):
+                        tokens_prompt += int(t.get("prompt_tokens", 0) or 0)
+                        tokens_completion += int(t.get("completion_tokens", 0) or 0)
+                        tokens_cycles += 1
                 elif kind == "task":
                     cat = e.get("category") or "?"
                     task_attempted[cat] += 1
@@ -197,6 +203,8 @@ def collect(memory_root: "str | Path", hours: Optional[float] = None) -> Dict[st
                      "lessons_added": lessons_added,
                      "lessons_merged": lessons_merged,
                      "user_corrections": corrections},
+        "tokens": {"prompt": tokens_prompt, "completion": tokens_completion,
+                   "cycles_with_usage": tokens_cycles},
         "lessons": lessons,
         "recipes": recipes,
         "outcomes_all_time": outcomes,
@@ -214,6 +222,14 @@ def format_metrics(data: Dict[str, Any]) -> str:
     cyc = data["cycles"]
     out.append(f"\ncycles: {cyc['total']}  api_calls: {cyc['api_calls']}  "
                f"budget_exhausted: {cyc['budget_exhausted']}/{cyc['total']}")
+    tok = data.get("tokens") or {}
+    if tok.get("cycles_with_usage"):
+        out.append(f"  tokens: prompt {tok['prompt']:,}  completion {tok['completion']:,}  "
+                   f"total {tok['prompt'] + tok['completion']:,} "
+                   f"({tok['cycles_with_usage']} instrumented cycles)")
+    else:
+        out.append("  tokens: not instrumented (needs v0.3.13+ endpoints "
+                   "reporting OpenAI usage blocks)")
     if cyc["attempted"]:
         out.append(f"  tasks attempted {cyc['attempted']}, solved {cyc['solved']} "
                    f"({100.0 * cyc['solved'] / max(1, cyc['attempted']):.1f}%)")

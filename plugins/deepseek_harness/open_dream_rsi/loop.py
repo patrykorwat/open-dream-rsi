@@ -445,6 +445,7 @@ class AutoRSIRuntime:
 
     def run_once(self) -> CycleReport:
         report = CycleReport()
+        usage_before = dict(getattr(self.client, "usage_total", None) or {})
         self._drain_staging(report)      # gate leftovers from previous cycles
         tasks = self._tasks() if callable(self._tasks) else list(self._tasks)
         if self.fair_queue and len(tasks) > 1:
@@ -481,10 +482,28 @@ class AutoRSIRuntime:
                     self._emit("evolution_alarm", category=cat,
                                rounds=d["rounds"])
             self._cycle_policy_promoted.clear()
-        self.memory.log_event("cycle", **report.to_dict())
-        self._emit("cycle_done", **report.to_dict())
+        event = report.to_dict()
+        tokens = self._tokens_delta(usage_before)
+        if tokens:
+            event["tokens"] = tokens
+        self.memory.log_event("cycle", **event)
+        self._emit("cycle_done", **event)
         self._alm_maintenance()
         return report
+
+    def _tokens_delta(self, before: Dict[str, int]) -> Dict[str, int]:
+        """Token usage burned this cycle (OpenAI ``usage`` accounting).
+
+        Empty dict when the client does not track usage (stub clients) or the
+        endpoint reports no ``usage`` blocks — metrics then show "not
+        instrumented" instead of a misleading zero.
+        """
+        total = dict(getattr(self.client, "usage_total", None) or {})
+        if not total:
+            return {}
+        delta = {key: max(0, int(total.get(key, 0) or 0) - int(before.get(key, 0) or 0))
+                 for key in ("prompt_tokens", "completion_tokens", "total_tokens")}
+        return delta if any(delta.values()) else {}
 
     def _alm_maintenance(self) -> None:
         """Deterministic lifecycle housekeeping after each cycle: staleness
