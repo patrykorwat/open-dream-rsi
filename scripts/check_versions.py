@@ -1,7 +1,8 @@
 """Fail when the release version drifts across the files that carry it.
 
-The version lives in five places (pyproject.toml, package __init__, the
-Cursor plugin + marketplace manifests, the npm bundle manifest); a version
+The version lives in six places (pyproject.toml, package __init__, the
+Cursor plugin + marketplace manifests, the npm bundle manifest, the Claude
+Code plugin manifest); a version
 left behind ships stale vendored code under an old number. Run before any
 release (the publish workflow enforces it) and after any version bump.
 """
@@ -42,6 +43,10 @@ def collect() -> dict:
     versions["plugins/deepseek_harness/package.json"] = json.loads(
         (REPO / "plugins" / "deepseek_harness" / "package.json").read_text()
     )["version"]
+    claude = REPO / ".claude-plugin" / "plugin.json"
+    if claude.is_file():
+        versions[".claude-plugin/plugin.json"] = json.loads(
+            claude.read_text(encoding="utf-8"))["version"]
     return versions
 
 

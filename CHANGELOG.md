@@ -4,6 +4,24 @@ All notable changes to `open-dream-rsi` are documented here. Versions 0.3.0 and
 earlier are summarized from the commit history; the full log is the source of
 truth.
 
+## [0.3.15] — 2026-10-27
+
+### Added
+
+- **Claude Code plugin**: `.claude-plugin/marketplace.json` (the repository
+  doubles as its own marketplace) and `.claude-plugin/plugin.json` (manifest
+  with the MCP server). `userConfig` prompts for the task-queue
+  (`tasks_path`, type `file`) and memory (`memory_path`, type `directory`)
+  paths at enable time and substitutes them into the server's arguments;
+  `PYTHONPATH=${CLAUDE_PLUGIN_ROOT}` runs the bundled stdlib-only checkout,
+  so no `pip install` is required. `scripts/check_versions.py` now watches
+  the new manifest's version (guarded by file existence, so checkouts of
+  older tags keep working).
+- Docs: the README install table and `docs/integrations.md` lead the Claude
+  Code section with the plugin route; `claude mcp add` remains the manual
+  fallback. Hermes row corrected: plugins install via the desktop app's
+  **Capabilities → Plugins**, not Settings.
+
 ## [0.3.14] — 2026-10-27
 
 ### Added

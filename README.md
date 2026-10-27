@@ -54,9 +54,9 @@ libraries: [docs/comparison.md](docs/comparison.md).
 
 | Agent | Install |
 |---|---|
-| **Hermes** | `pip install open-dream-rsi` · `hermes plugins install "https://github.com/patrykorwat/open-dream-rsi#odr-trigger"` · `hermes plugins enable odr-trigger` — or in the desktop app: Settings → Plugins → **Install from Git** |
+| **Hermes** | `pip install open-dream-rsi` · `hermes plugins install "https://github.com/patrykorwat/open-dream-rsi#odr-trigger"` · `hermes plugins enable odr-trigger` — or in the desktop app: Capabilities → Plugins → **Install from Git** |
 | **DeepSeek Harness** | `dsh plugin --profile <name> add dsh-open-dream-rsi` (npm bundle — no pip) |
-| **Claude Code** | `pip install open-dream-rsi` · `claude mcp add open-dream-rsi -- odr mcp --tasks /ABS/PATH/tasks.json --memory /ABS/PATH/.dream_rsi` |
+| **Claude Code** | plugin from this repo: `claude plugin marketplace add patrykorwat/open-dream-rsi` + `claude plugin install open-dream-rsi@open-dream-rsi` (prompts for the task/memory paths; no pip) — or `pip install open-dream-rsi` · `claude mcp add open-dream-rsi -- odr mcp --tasks /ABS/PATH/tasks.json --memory /ABS/PATH/.dream_rsi` |
 | **Codex CLI** | `pip install open-dream-rsi` · `codex mcp add open-dream-rsi -- odr mcp --tasks /ABS/PATH/tasks.json --memory /ABS/PATH/.dream_rsi` |
 | **OpenCode** | `pip install open-dream-rsi`, then the `mcp` block in [docs/integrations.md#opencode](docs/integrations.md#opencode) |
 | **Goose** | `git clone https://github.com/patrykorwat/open-dream-rsi && cd open-dream-rsi && ./scripts/odr_goose_setup.sh` — resolves your provider, starts the proxy, writes the config itself |

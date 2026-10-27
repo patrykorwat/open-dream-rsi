@@ -408,6 +408,24 @@ codex mcp add open-dream-rsi -- python3 -m open_dream_rsi mcp \
 
 ### Claude Code
 
+Install as a plugin from this repository — Claude Code prompts for the two
+paths when the plugin is enabled, and no `pip install` is needed (the
+manifest runs the bundled stdlib-only checkout through `PYTHONPATH`;
+a system `python3` (3.10+) on PATH is the only requirement):
+
+```bash
+claude plugin marketplace add patrykorwat/open-dream-rsi
+claude plugin install open-dream-rsi@open-dream-rsi
+```
+
+Inside a session the same works as `/plugin marketplace add …` and
+`/plugin install …`. The manifest's version is synced with the release
+version (`scripts/check_versions.py` watches `.claude-plugin/plugin.json`).
+The server resolves its brain the zero-configuration way (env → local goose
+config → `http://127.0.0.1:8000/v1`).
+
+Manual route — one MCP server from a pip-installed package:
+
 ```bash
 claude mcp add open-dream-rsi -- odr mcp \
   --tasks /ABSOLUTE/PATH/tasks.json \

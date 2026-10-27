@@ -1,0 +1,44 @@
+{
+  "name": "open-dream-rsi",
+  "version": "0.3.15",
+  "description": "Dream-RSI learning loop for Claude Code: queue Python tasks with tests, pull verified recipes and curated lessons, run improvement cycles. The MCP server ships inside the plugin (stdlib only, no pip install); Claude Code prompts for the task-queue and memory paths when the plugin is enabled.",
+  "author": {
+    "name": "Patryk Orwat"
+  },
+  "repository": "https://github.com/patrykorwat/open-dream-rsi",
+  "license": "MIT",
+  "keywords": [
+    "dream-rsi",
+    "self-improvement",
+    "lessons",
+    "mcp",
+    "mcp-server"
+  ],
+  "userConfig": {
+    "tasks_path": {
+      "type": "file",
+      "title": "Task queue (tasks.json)",
+      "description": "Absolute path to the tasks.json the dreamer works on",
+      "required": true
+    },
+    "memory_path": {
+      "type": "directory",
+      "title": "Memory directory",
+      "description": "Absolute path of the --memory store (policies, recipes, lessons, trees)",
+      "required": true
+    }
+  },
+  "mcpServers": {
+    "open-dream-rsi": {
+      "command": "python3",
+      "args": [
+        "-m", "open_dream_rsi", "mcp",
+        "--tasks", "${user_config.tasks_path}",
+        "--memory", "${user_config.memory_path}"
+      ],
+      "env": {
+        "PYTHONPATH": "${CLAUDE_PLUGIN_ROOT}"
+      }
+    }
+  }
+}
