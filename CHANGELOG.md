@@ -22,6 +22,16 @@ truth.
   fallback. Hermes row corrected: plugins install via the desktop app's
   **Capabilities → Plugins**, not Settings.
 
+### Changed
+
+- Versioning model aligned with basal-skills: a root `VERSION` file is the
+  single source of truth; `scripts/check_versions.py` now compares every
+  artifact (pyproject, package `__init__`, Cursor plugin + marketplace
+  manifests, npm bundle, Claude Code manifest) against it and fails when
+  authored content changed since the last release tag without a `VERSION`
+  bump (graceful skip on shallow checkouts without tags; the CI lint job
+  now fetches full history so the rule actually runs).
+
 ## [0.3.14] — 2026-10-27
 
 ### Added
