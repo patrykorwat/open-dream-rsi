@@ -139,6 +139,7 @@ def collect(memory_root: "str | Path", hours: Optional[float] = None) -> Dict[st
                 }
 
     lessons: Dict[str, Dict[str, int]] = {}
+    lesson_usage: List[Dict[str, Any]] = []
     lessons_path = root / "lessons.json"
     if lessons_path.exists():
         try:
@@ -150,6 +151,15 @@ def collect(memory_root: "str | Path", hours: Optional[float] = None) -> Dict[st
                 st = Counter(str(i.get("status", "?")) for i in items if isinstance(i, dict))
                 lessons[cat] = {"active": st.get("active", 0), "staging": st.get("staging", 0),
                                 "total": len(items)}
+                for i in items:
+                    if isinstance(i, dict):
+                        lesson_usage.append({
+                            "category": cat,
+                            "trigger": str(i.get("trigger", "")),
+                            "uses": int(i.get("uses", 0) or 0),
+                            "wins": int(i.get("wins", 0) or 0),
+                            "status": str(i.get("status", "?")),
+                        })
 
     recipes: Dict[str, float] = {}
     recipes_path = root / "recipes.json"
@@ -206,6 +216,7 @@ def collect(memory_root: "str | Path", hours: Optional[float] = None) -> Dict[st
         "tokens": {"prompt": tokens_prompt, "completion": tokens_completion,
                    "cycles_with_usage": tokens_cycles},
         "lessons": lessons,
+        "lesson_usage": lesson_usage,
         "recipes": recipes,
         "outcomes_all_time": outcomes,
         "backlog": {"queued_tasks": queue_len,
@@ -268,6 +279,22 @@ def format_metrics(data: Dict[str, Any]) -> str:
             out.append(f"  {cat}: {s['active']}/{s['staging']}")
     else:
         out.append("  (knowledge base empty)")
+    usage = data.get("lesson_usage") or []
+    if usage:
+        out.append("\nlesson usage (uses -> wins, credit rate; uses/wins come from "
+                   "record_lesson_usage: surfaced into proposals / task solved):")
+        def _dead(u):
+            return u["wins"] == 0 and u["uses"] >= 4  # mirrors curator.PRUNE_MIN_USES
+        ranked = sorted(usage, key=lambda u: (0 if _dead(u) else 1,
+                                              -u["uses"], -u["wins"], u["trigger"]))
+        shown = ranked[:12]
+        for u in shown:
+            rate = f"{100.0 * u['wins'] / u['uses']:.0f}%" if u["uses"] else "-"
+            flag = "  <-- dead (>=4 uses, 0 wins)" if _dead(u) else ""
+            out.append(f"  {u['category']} | {u['trigger']}: {u['uses']} -> "
+                       f"{u['wins']} ({rate}){flag}")
+        if len(ranked) > len(shown):
+            out.append(f"  ...{len(ranked) - len(shown)} more")
     recipes = data["recipes"]
     if recipes:
         out.append("recipes: " + ", ".join(f"{c}={s:g}" for c, s in sorted(recipes.items())))

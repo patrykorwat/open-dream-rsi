@@ -33,7 +33,8 @@ class MetricsCollectTest(unittest.TestCase):
                 {"ts": now - 5, "kind": "lesson_gate"},
             ])
             (root / "lessons.json").write_text(json.dumps(
-                {"cat": [{"status": "active"}, {"status": "staging"}]}))
+                {"cat": [{"status": "active", "trigger": "pip cache", "uses": 6, "wins": 2},
+                         {"status": "staging", "trigger": "dead one", "uses": 5, "wins": 0}]}))
             (root / "recipes.json").write_text(json.dumps(
                 {"cat": {"code": "x", "score": 0.9}}))
             (root / "task_outcomes.json").write_text(json.dumps(
@@ -55,6 +56,14 @@ class MetricsCollectTest(unittest.TestCase):
             self.assertEqual(m["curation"]["lessons_added"], 2)
             self.assertEqual(m["curation"]["gate_verdicts"], 1)
             self.assertEqual(m["lessons"]["cat"], {"active": 1, "staging": 1, "total": 2})
+            self.assertEqual(m["lesson_usage"], [
+                {"category": "cat", "trigger": "pip cache", "uses": 6, "wins": 2, "status": "active"},
+                {"category": "cat", "trigger": "dead one", "uses": 5, "wins": 0, "status": "staging"},
+            ])
+            text = format_metrics(m)
+            self.assertIn("lesson usage (uses -> wins", text)
+            self.assertIn("pip cache: 6 -> 2 (33%)", text)
+            self.assertIn("dead one: 5 -> 0 (0%)  <-- dead (>=4 uses, 0 wins)", text)
             self.assertEqual(m["recipes"], {"cat": 0.9})
             self.assertEqual(m["outcomes_all_time"]["cat"], {"attempted": 3, "solved": 1})
             self.assertEqual(m["backlog"]["queued_tasks"], 2)

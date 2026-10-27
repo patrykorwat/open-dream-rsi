@@ -4,6 +4,21 @@ All notable changes to `open-dream-rsi` are documented here. Versions 0.3.0 and
 earlier are summarized from the commit history; the full log is the source of
 truth.
 
+## [0.3.14] — 2026-10-27
+
+### Added
+- **Lesson effectiveness in `odr metrics`**: per-lesson `uses -> wins`
+  (credit rate) rendered from the `lessons.json` records that
+  `record_lesson_usage` already maintains (surfaced into proposals /
+  task solved); dead lessons (>=4 uses, 0 wins — the curator's prune
+  rule) are flagged so the operator sees what never helped.
+
+### Changed
+- **Curator contract**: explicit trigger few-shots — GOOD: 1-4 lowercase
+  keywords ('pip cache', 'ssh key perms', 'docker compose env'); BAD:
+  sentence-like 'traceback code does not execute' (5 words, rejected by
+  validation). Cuts the "trigger must be 1-4 words" rejection class.
+
 ## [0.3.13] — 2026-10-25
 
 ### Added
