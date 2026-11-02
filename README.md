@@ -218,15 +218,11 @@ nothing new to learn:
 
 | Tier | Triggered when | What runs |
 |---|---|---|
-| **maintenance** | quiet call (no new evidence, recent last dream) | ingest scan (cheap), ALM stale/supersede/archive/GC, skills republish — **zero LLM** |
-| **full** | `min_new_evidence` (default 3) new failure-shaped sessions, OR `max_age_seconds` (default 6 h) since the last full dream | + online attempts, dreaming, paired-replay promotion gate (`budget`, default 100 API calls) |
+| **maintenance** | quiet call (recent last dream) | ALM stale/supersede/archive/GC — **zero LLM** |
+| **full** | `max_age_seconds` (default 6 h) since the last full dream | + online attempts, dreaming, paired-replay promotion gate (`budget`, default 100 API calls) |
 
 A busy day dreams a few times, a quiet day once, an idle day never;
-concurrent calls collapse on a single-instance lock. **Probes are queued
-automatically**: every failure-shaped session appends its *own request* to
-`tasks.json` as a `probe:<session>` task (`max_attempts=1`, appended after
-manual tasks), so the promotion gate never depends on hand-written task
-files — the evidence you already produced is the counterparty.
+concurrent calls collapse on a single-instance lock.
 
 **An idle fleet is never fully idle (wake self-test).** By default
 (`ODR_WAKE=1`, or `--wake`) a FULL dream that finds `tasks.json` empty

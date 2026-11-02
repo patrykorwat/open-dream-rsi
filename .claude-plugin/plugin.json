@@ -1,6 +1,6 @@
 {
   "name": "open-dream-rsi",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Dream-RSI learning loop for Claude Code: queue Python tasks with tests, pull verified recipes, run improvement cycles. The MCP server ships inside the plugin (stdlib only, no pip install); Claude Code prompts for the task-queue and memory paths when the plugin is enabled.",
   "author": {
     "name": "Patryk Orwat"

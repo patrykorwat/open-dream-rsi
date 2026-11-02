@@ -4,6 +4,22 @@ All notable changes to `open-dream-rsi` are documented here. Versions 0.3.0 and
 earlier are summarized from the commit history; the full log is the source of
 truth.
 
+## [0.4.4] — 2026-11-02
+
+### Fixed
+
+- README: the "Automated dreaming" section still described the removed
+  ingest/probe machinery (ingest scan, `min_new_evidence` trigger, the
+  probe-queue paragraph) — tiers now match `dream_once` (age-based, no
+  session ingest).
+
+## [0.4.3] — 2026-11-02
+
+### Fixed
+
+- vendored mirror re-sync AFTER the version bump (the drift test compares
+  per-file content; the mirror had lagged one version behind).
+
 ## [0.4.2] — 2026-11-02
 
 ### Fixed
