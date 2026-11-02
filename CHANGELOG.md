@@ -4,6 +4,13 @@ All notable changes to `open-dream-rsi` are documented here. Versions 0.3.0 and
 earlier are summarized from the commit history; the full log is the source of
 truth.
 
+## [0.4.2] — 2026-11-02
+
+### Fixed
+
+- vendored mirror re-sync: the 0.4.1 bump changed `open_dream_rsi/__init__.py`
+  after the mirror copy — content drift caught by the vendored-copy test.
+
 ## [0.4.1] — 2026-11-02
 
 ### Fixed
