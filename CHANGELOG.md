@@ -4,6 +4,13 @@ All notable changes to `open-dream-rsi` are documented here. Versions 0.3.0 and
 earlier are summarized from the commit history; the full log is the source of
 truth.
 
+## [0.4.1] — 2026-11-02
+
+### Fixed
+
+- lint: unused `dataclasses.field` import left behind by the 0.4.0 curation
+  removal (`gate_replay.py` + vendored copy) — `ruff 0.17.1` clean again.
+
 ## [0.4.0] — 2026-11-02
 
 ### Removed
