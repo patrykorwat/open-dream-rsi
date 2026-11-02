@@ -13,7 +13,7 @@ Protocol (per category):
           today: no cross-task learning),  budget 6 calls per task.
   WARM  — a training task per category is solved first (the "dreaming"
           phase), then the SAME eval tasks run against the trained, shared
-          memory — the warm_start recipe + policies + lessons kick in.
+          memory — the warm_start recipe + policies kick in.
 
 Headline numbers: mean API calls per solved eval task (COLD vs WARM) and
 wall-time ratio. Everything is written to JSON so the table can be rebuilt
@@ -175,18 +175,16 @@ def run_task(task: Task, memory_dir: str, args, label: str) -> Dict[str, Any]:
     if args.temperature is not None:
         client = TempOverride(client, args.temperature)
     t0 = time.time()
-    # A warm arm only 'counts' as warm if the recipe (or lessons) actually
-    # exist in its memory at run start — record what the arm really had.
+    # A warm arm only 'counts' as warm if the recipe actually exists in
+    # its memory at run start — record what the arm really had.
     _mem_probe = DreamMemory(memory_dir)
     recipe_at_start = _mem_probe.get_recipe(task.category) is not None
-    lessons_at_start = bool(_mem_probe.get_lessons(task.category))
     rt = AutoRSIRuntime(client=client, memory=DreamMemory(memory_dir),
                         tasks=[task], api_call_budget=args.budget,
                         max_tokens=4096)
     rep = rt.run_once().to_dict()
     rep.update(task_id=task.task_id, category=task.category, label=label,
                recipe_at_start=recipe_at_start,
-               lessons_at_start=lessons_at_start,
                wall=round(time.time() - t0, 1))
     # A solve reached through connection failures is NOT the same evidence
     # as a clean solve — count llm_error events per task.
@@ -327,7 +325,7 @@ def main() -> int:
               "those rows are not clean evidence.")
     cold_c = summary[0]["calls_per_solve"]; warm_c = summary[1]["calls_per_solve"]
     # honest headline: restrict warm to runs that actually HAD a recipe at
-    # start (a train failure silently degrades the arm to lessons-only)
+    # start (a train failure silently degrades the arm to cold-equivalent)
     warm_r = [r for r in results if r["label"] == "warm" and r.get("recipe_at_start")]
     if warm_r:
         wr_s = sum(r["tasks_solved"] for r in warm_r)

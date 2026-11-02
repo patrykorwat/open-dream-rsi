@@ -1,6 +1,6 @@
 {
   "name": "open-dream-rsi",
-  "description": "Dream-RSI self-improvement loop: verified recipes, replay-gated lessons and an improvement cycle around a frozen LLM.",
+  "description": "Dream-RSI self-improvement loop: verified recipes and an improvement cycle around a frozen LLM.",
   "owner": {
     "name": "Patryk Orwat"
   },
@@ -8,7 +8,7 @@
     {
       "name": "open-dream-rsi",
       "source": "./",
-      "description": "Dream-RSI learning loop over MCP — queue tasks with tests, reuse verified recipes and curated lessons, run improvement cycles."
+      "description": "Dream-RSI learning loop over MCP — queue tasks with tests, reuse verified recipes, run improvement cycles."
     }
   ]
 }

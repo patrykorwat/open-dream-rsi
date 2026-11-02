@@ -4,13 +4,11 @@ Cursor ships no public OpenAI-compatible chat API, so the zero-proxy route
 to "the dreamer thinks with Cursor" is the ``cursor-agent`` CLI: it runs a
 headless agent turn authenticated by the user's Cursor login — no proxy, no
 API key, no endpoint to configure. Output text mode returns the final
-answer only, which is exactly what the curator contract needs.
+answer only, which is all a chat client needs to return.
 
-Failure semantics (the dream ingest contract, 0.2.4+): every failure here
-raises RuntimeError, which ``distill`` reports as ``llm error`` and
-``ingest_sessions`` treats as a transport error — the session is DEFERRED
-(stays unseen), so a machine without the CLI simply pauses learning instead
-of burning evidence.
+Failure semantics: every failure here raises RuntimeError, which the
+loop records as an ``llm_error`` event — a machine without the CLI
+simply runs endpoint-less (maintenance-only cycles) instead of crashing.
 """
 
 from __future__ import annotations
@@ -21,8 +19,8 @@ import subprocess
 import sys
 from typing import Dict, List, Optional
 
-#: Hard ceiling for one headless agent turn. The curator's distill prompt is
-#: small; a hang here must not stall the dream cycle.
+#: Hard ceiling for one headless agent turn. A hang here must not
+#: stall the dream cycle.
 DEFAULT_TIMEOUT = 240.0
 
 _IS_WIN = sys.platform.startswith("win")
@@ -33,7 +31,7 @@ class CursorAgentClient:
 
     Accepts the same ``chat(messages, model=..., temperature=..., max_tokens=...)``
     call shape as ``OpenAICompatibleClient`` so it drops in anywhere a client
-    is expected (loop, curator, judge). ``temperature``/``max_tokens`` have no
+    is expected (loop, judge). ``temperature``/``max_tokens`` have no
     CLI equivalent and are ignored on purpose — the agent applies its own
     defaults. ``model``: only passed through when set; unset means "whatever
     the user's Cursor is configured for" (the no-pinning default).

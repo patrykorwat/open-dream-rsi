@@ -14,7 +14,7 @@ import time
 import unittest
 from pathlib import Path
 
-from open_dream_rsi.dream import _acquire, _release, dream_once, ingest_sessions
+from open_dream_rsi.dream import _acquire, _release, dream_once
 
 
 def _hermes_db(path: Path, n_sessions: int = 3, fail: bool = True) -> None:
@@ -55,8 +55,8 @@ class _NoLLM:
 
 
 class _JunkLLM:
-    """Client that replies with non-JSON: the curator rejects the CONTENT,
-    so the session is consumed (seen) — the contrast to _NoLLM."""
+    """Client that replies with non-JSON: the policy validator rejects the
+    content, so the cycle records an llm_error — the contrast to _NoLLM."""
 
     def chat(self, *a, **k):
         return "not a json array"
@@ -74,19 +74,6 @@ class TestDreamOnce(unittest.TestCase):
         report = dream_once(self.mem, client=None)
         self.assertFalse(report["skipped"])
         self.assertEqual(report["tier"], "full")  # first run: age > max_age
-
-    def test_skills_published_from_active_only(self):
-        kb = self.mem / "lessons.json"
-        kb.write_text(json.dumps({
-            "median": [{"trigger": "median even",
-                        "text": "Sort first, return the mean of the two "
-                                "middle values, then answer.",
-                        "status": "active", "wins": 3, "uses": 5,
-                        "evidence": [], "updated_at": time.time()}]}))
-        out = self.tmp / "skills"
-        report = dream_once(self.mem, client=None, skills_out=out)
-        self.assertEqual(report["skills"], 1)
-        self.assertTrue((out / "median" / "SKILL.md").exists())
 
     def test_lock_collapses_concurrent_runs(self):
         lock = _acquire(self.mem)
@@ -130,58 +117,6 @@ class TestDreamOnce(unittest.TestCase):
         self.assertTrue(lock.exists())
         lock.unlink()
 
-    def test_probe_tasks_queued_from_failure_sessions(self):
-        from open_dream_rsi.memory import DreamMemory
-        mem = DreamMemory(self.mem)
-        ingest_sessions(mem, self.db, client=_JunkLLM())
-        tp = self.mem / "tasks.json"
-        self.assertTrue(tp.exists())
-        tasks = json.loads(tp.read_text())
-        probes = [t for t in tasks if str(t["task_id"]).startswith("probe:")]
-        self.assertEqual(len(probes), 3)
-        self.assertEqual(probes[0]["max_attempts"], 1)
-        self.assertEqual(probes[0]["prompt"], "fix this broken thing")
-        # idempotent: a second ingest adds no duplicates
-        ingest_sessions(mem, self.db, client=_JunkLLM())
-        self.assertEqual(len(json.loads(tp.read_text())), 3)
-
-    def test_ingest_skips_seen_sessions(self):
-        from open_dream_rsi.memory import DreamMemory
-        mem = DreamMemory(self.mem)
-        # a content-rejecting client (no JSON in the reply) consumes the
-        # session: the curator judged the reply, so re-offering it adds
-        # nothing.
-        r1 = ingest_sessions(mem, self.db, client=_JunkLLM())
-        self.assertEqual(r1["new"], 3)
-        r2 = ingest_sessions(mem, self.db, client=_JunkLLM())
-        self.assertEqual(r2["new"], 0)
-        # a transport-failing client (dead endpoint) defers instead: the
-        # evidence stays unseen and is offered to the next live cycle.
-        fresh = Path(tempfile.mkdtemp()) / "mem2"
-        fresh.mkdir()
-        r3 = ingest_sessions(DreamMemory(fresh), self.db, client=_NoLLM())
-        self.assertEqual(r3["deferred"], 3)
-        self.assertEqual(r3["probes"], 0)
-        tasks = (json.loads((fresh / "tasks.json").read_text())
-                 if (fresh / "tasks.json").exists() else [])
-        self.assertEqual(tasks, [])
-        r4 = ingest_sessions(DreamMemory(fresh), self.db, client=_NoLLM())
-        self.assertEqual(r4["new"], 3)  # still unseen — not consumed
-        # client=None means "no endpoint" -> sessions stay unseen until a
-        # cycle can actually distil them.
-        fresh2 = Path(tempfile.mkdtemp()) / "mem3"
-        fresh2.mkdir()
-        r5 = ingest_sessions(DreamMemory(fresh2), self.db, client=None)
-        self.assertEqual(r5["new"], 0)  # offline never marks evidence seen
-
-    def test_maintenance_tier_when_no_new_evidence(self):
-        # first full run establishes last_full_dream and accounts the
-        # sessions; an immediate second call must be maintenance (budget 0)
-        dream_once(self.mem, sessions_db=self.db, client=_JunkLLM())
-        report = dream_once(self.mem, sessions_db=self.db, client=_JunkLLM())
-        self.assertEqual(report["tier"], "maintenance")
-
-
 class CursorIngestTests(unittest.TestCase):
     """dream --source cursor: the Cursor store ingests like a Hermes one
     (no MCP involved)."""
@@ -212,33 +147,6 @@ class CursorIngestTests(unittest.TestCase):
         g.close()
         return str(user)
 
-    def test_dream_once_ingests_cursor_store(self):
-        report = dream_once(self.mem, sessions_db=self._cursor_store(),
-                            session_source="cursor", client=_JunkLLM())
-        self.assertFalse(report["skipped"])
-        self.assertEqual(report["ingest"]["new"], 1)
-        # probe task queued exactly like the hermes path does
-        tasks = json.loads((self.mem / "tasks.json").read_text())
-        self.assertEqual(len(tasks), 1)
-        self.assertTrue(str(tasks[0]["task_id"]).startswith("probe:"))
-
-    def test_cursor_ingest_is_idempotent(self):
-        from open_dream_rsi.memory import DreamMemory
-        store = self._cursor_store()
-        r1 = ingest_sessions(DreamMemory(self.mem), store, source="cursor",
-                             client=_JunkLLM())
-        self.assertEqual(r1["new"], 1)
-        r2 = ingest_sessions(DreamMemory(self.mem), store, source="cursor",
-                             client=_JunkLLM())
-        self.assertEqual(r2["new"], 0)
-
-    def test_unknown_source_raises(self):
-        from open_dream_rsi.memory import DreamMemory
-        with self.assertRaises(ValueError):
-            ingest_sessions(DreamMemory(self.mem), self.tmp / "whatever.db",
-                            source="mystery", client=_NoLLM())
-
-
 class ProbeQueueCapTests(unittest.TestCase):
     """The queue backstop (dream._cap_probe_queue): retires OLD, already-
     attempted probes only — an unprocessed probe is never dropped."""
@@ -251,33 +159,6 @@ class ProbeQueueCapTests(unittest.TestCase):
         self.queue.write_text(json.dumps(
             [{"task_id": i, "category": "c", "prompt": "p", "criteria": "d"}
              for i in ids]))
-
-    def test_never_drops_an_unattempted_probe(self):
-        from open_dream_rsi.dream import MAX_PROBE_TASKS, _cap_probe_queue
-        ids = [f"probe:2026{i:04d}" for i in range(MAX_PROBE_TASKS + 10)]
-        self._write(ids)
-        removed = _cap_probe_queue(self.tmp)   # no task_attempts.json at all
-        self.assertEqual(removed, 0)
-        self.assertEqual(len(json.loads(self.queue.read_text())), len(ids))
-
-    def test_retires_old_attempted_probes_over_the_cap(self):
-        from open_dream_rsi.dream import MAX_PROBE_TASKS, _cap_probe_queue
-        ids = [f"probe:2026{i:04d}" for i in range(MAX_PROBE_TASKS + 10)]
-        self._write(ids)
-        (self.tmp / "task_attempts.json").write_text(
-            json.dumps({i: 1 for i in ids}))
-        removed = _cap_probe_queue(self.tmp)
-        self.assertEqual(removed, 10)
-        left = json.loads(self.queue.read_text())
-        self.assertEqual(len(left), MAX_PROBE_TASKS)
-        # the NEWEST probes survive; the oldest attempted ones retire
-        self.assertNotIn("probe:20260000", [t["task_id"] for t in left])
-
-    def test_under_cap_is_a_noop(self):
-        from open_dream_rsi.dream import _cap_probe_queue
-        self._write(["probe:a", "manual-1"])
-        self.assertEqual(_cap_probe_queue(self.tmp), 0)
-
 
 class QueueCliTests(unittest.TestCase):
     """odr task add/list — the no-MCP queue seam (loop.append_task)."""

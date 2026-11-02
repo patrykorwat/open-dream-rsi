@@ -35,7 +35,7 @@ PROXY_TOKEN = "proxy-internal"  # dummy: proxy authenticates upstream itself
 DESCRIPTION = (
     "Dream-RSI self-improvement loop. Queue Python tasks with odr_add_task, "
     "run an improvement cycle with odr_run_once, reuse verified solutions via "
-    "odr_recipes/odr_lessons, inspect learned state with odr_status."
+    "odr_recipes, inspect learned state with odr_status."
 )
 
 

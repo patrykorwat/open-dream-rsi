@@ -37,7 +37,7 @@ class TreeNode:
     #: tool result, in its REPLAY-SAFE form (see
     #: ``SentinelObservation.to_world_dict``): signature, repeat_world,
     #: recurring, blocked, budget_fraction. Cross-session counters are
-    #: stripped by construction — they belong to the live host / curator,
+    #: stripped by construction — they belong to the live host,
     #: never to the historical world (prefix-only replay invariant).
     sentinel: Optional[Dict[str, Any]] = None
     #: One of ``TerminationReason``'s str values, recorded on the node where

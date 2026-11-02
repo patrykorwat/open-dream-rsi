@@ -16,14 +16,6 @@ from open_dream_rsi.core.policygen import (
     extract_python_block,
     validate_policy_source,
 )
-from open_dream_rsi.core.curator import (
-    KnowledgeCurator,
-    LessonValidationError,
-    curate_lessons,
-    lesson_key,
-    select_lessons,
-    validate_lesson_items,
-)
 from open_dream_rsi.utils.evaluator import PolicyEvaluator
 from open_dream_rsi.lifecycle import (
     ALLOWED_TRANSITIONS,
@@ -46,7 +38,7 @@ from open_dream_rsi.bench_policy import (
     run_policy_benchmark,
 )
 
-__version__ = "0.3.15"
+__version__ = "0.4.0"
 
 __all__ = [
     "DiscoveryTree",
@@ -72,12 +64,6 @@ __all__ = [
     "ArtifactTransitionEvent",
     "InvalidTransitionError",
     "rebuild_artifact_state",
-    "KnowledgeCurator",
-    "LessonValidationError",
-    "curate_lessons",
-    "lesson_key",
-    "select_lessons",
-    "validate_lesson_items",
     "LLMConfig",
     "OpenAICompatibleClient",
     "StubClient",

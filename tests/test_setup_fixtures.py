@@ -52,7 +52,7 @@ class TestPromptHoisting(unittest.TestCase):
         task = Task(task_id="t", category="c", prompt="wrap", tests=tests)
         rt = AutoRSIRuntime(client=client, memory=DreamMemory(
             __import__("tempfile").mkdtemp()), tasks=[task],
-            api_call_budget=1, enable_policy_code=False, enable_knowledge=False)
+            api_call_budget=1, enable_policy_code=False)
         rt.run_once()
         prompt = client.prompts[0]
         self.assertEqual(prompt.count(big), 1)          # hoisted, rendered once
@@ -65,7 +65,7 @@ class TestPromptHoisting(unittest.TestCase):
         task = Task(task_id="t", category="c", prompt="wrap", tests=tests)
         rt = AutoRSIRuntime(client=client, memory=DreamMemory(
             __import__("tempfile").mkdtemp()), tasks=[task],
-            api_call_budget=1, enable_policy_code=False, enable_knowledge=False)
+            api_call_budget=1, enable_policy_code=False)
         rt.run_once()
         self.assertNotIn("Fixtures (already defined", client.prompts[0])
 

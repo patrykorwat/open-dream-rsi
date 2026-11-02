@@ -7,8 +7,9 @@ the durable ledger, the declarative note); this adapter only:
   * reads thresholds from Hermes plugin config,
   * registers the hook + slash command.
 
-Why the mechanism lives here and not in the skill curator: curation wakes
-on a schedule (weekly default) while recurring error classes re-appear
+Why the mechanism lives in a synchronous hook: a scheduled offline job
+would wake on a schedule (weekly default) while recurring error classes
+re-appear
 WITHIN one session after a median gap of 4.3 min (measured on a production
 session store; anonymized replay fixture: fixtures/sentinel_audit.json). Reaction must be synchronous with tool execution.
 

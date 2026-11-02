@@ -1,24 +1,18 @@
-"""Git-backed lesson stores: publish and consume curated knowledge (issue #3
-follow-up: sharing).
+"""Git-backed stores: share recorded worlds and policy programs.
 
-A *store* is a directory of portable lesson files — optionally a git
+A *store* is a directory of portable artifact files — optionally a git
 checkout, so it can live on GitHub and be consumed by any other instance:
 
-    .dream_rsi/lessons.json          (private, runtime view)
-        |  export: active lessons only, secrets redacted, checksummed manifest
-        v
-    <store>/manifest.json            (schema odr-lessons/v1 + sha256 per file)
-    <store>/lessons/<category>.json  (portable records + provenance)
-        ^  import: structural gate, lands as STAGING — never ACTIVE
-        |
-    any other .dream_rsi instance
+    <store>/manifest.json            (schema manifest + sha256 per file)
+    <store>/trees/<task>.json        (recorded discovery trees)
+    <store>/policies/<category>.json (policy programs)
 
-Trust model, identical to the session import: sharing knowledge, not
-authority. Export ships only lessons that EARNED activation (paired-replay
-gate); import re-validates structurally, registers CANDIDATE -> VALIDATED
-in the ALM, and leaves activation to the *local* promotion gate. A checksum
-mismatch against the manifest aborts the import — a tampered store is
-detected, not trusted.
+Trust model: sharing evidence and candidates, not authority. Imported
+worlds land under ``trees/imported/`` (evidence, never live tasks) and
+imported policy programs register as CANDIDATE -> VALIDATED in the ALM —
+activation stays with the *local* replay gate. A checksum mismatch
+against the manifest aborts the import — a tampered store is detected,
+not trusted.
 """
 
 from __future__ import annotations
@@ -34,12 +28,33 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from open_dream_rsi.memory import DreamMemory
-from open_dream_rsi.sessions import redact_secrets
 
-SCHEMA = "odr-lessons/v1"
-MAX_EVIDENCE_PER_SHARED_LESSON = 5
 
+SCHEMA = "odr-lessons/v1"  # store manifest format (name is historical)
 _URL_RE = re.compile(r"^(https?://|ssh://|git://|git@)")
+
+
+_SECRET_PATTERNS = [
+    re.compile(r"sk-[A-Za-z0-9_\-]{12,}"),                     # OpenAI-style
+    re.compile(r"ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}"),  # GitHub tokens
+    re.compile(r"AKIA[0-9A-Z]{16}"),                           # AWS
+    re.compile(r"xox[baprs]-[A-Za-z0-9\-]{10,}"),              # Slack
+    re.compile(r"(?i)\b(password|passwd|secret|token|api[_-]?key|access[_-]?key)"
+               r"\b(\s*[=:]\s*)\S+"),                           # key: value pairs
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{8,}"),         # bearer headers
+    re.compile(r"[A-Za-z0-9+/_\-]{40,}={0,2}"),                # long opaque blobs
+]
+
+
+def redact_secrets(text: str) -> str:
+    """Best-effort scrub of credential-shaped substrings. Deliberately
+    over-eager: a false positive costs one garbled word in an evidence
+    snippet, a false negative writes a live token to disk."""
+    out = text or ""
+    for pat in _SECRET_PATTERNS:
+        out = pat.sub("[REDACTED]", out)
+    return out
+
 
 
 class LessonShareError(RuntimeError):
@@ -59,10 +74,10 @@ class StoreStatus:
                 "categories": self.categories, "errors": self.errors}
 
 
+
 def _slug(category: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", str(category).lower()).strip("-") \
         or "uncategorized"
-
 
 def _default_branch(cwd: Path) -> str:
     """Resolve the remote's default branch name (robust to dangling HEADs)."""
@@ -169,166 +184,8 @@ def resolve_store(store: "str | Path", *, cache_root: Optional[Path] = None,
 
 # -- export ---------------------------------------------------------------------
 
-def _portable(entry: Dict[str, Any]) -> Dict[str, Any]:
-    """One shared lesson record: contract fields + provenance, redacted.
-    Internal bookkeeping (keys, digests, status) never leaves the instance —
-    consumers re-derive their own."""
-    return {
-        "trigger": str(entry.get("trigger", "")),
-        "text": redact_secrets(str(entry.get("text", ""))),
-        "evidence": [redact_secrets(str(e)) for e in
-                     (entry.get("evidence") or [])][:MAX_EVIDENCE_PER_SHARED_LESSON],
-        "wins": int(entry.get("wins", 0)),
-        "uses": int(entry.get("uses", 0)),
-        "provenance": {"source": "dream_rsi_curator",
-                       "promoted_by": "paired_replay_gate",
-                       "promoted_at": float(entry.get("updated_at", 0.0))},
-    }
 
 
-def export_lessons(memory_or_root: Any, store: "str | Path", *,
-                   categories: Optional[List[str]] = None,
-                   message: Optional[str] = None,
-                   push: bool = True) -> StoreStatus:
-    """Write ACTIVE lessons into ``<store>/lessons/<category>.json`` plus a
-    checksummed manifest. Git stores: pull first, commit (and push unless
-    ``push=False``). Secrets redacted. Staging/rejected entries are never
-    shipped — unearned knowledge stays home."""
-    root = _memory_root(memory_or_root)
-    kb = _load_json(root / "lessons.json", {})
-    store_dir = resolve_store(store, cache_root=root, create=True)
-    git = is_git_store(store_dir)
-    (store_dir / "lessons").mkdir(parents=True, exist_ok=True)
-    manifest_path = store_dir / "manifest.json"
-    manifest = _load_json(manifest_path, {"schema": SCHEMA, "categories": {}})
-    if not isinstance(manifest, dict):
-        manifest = {"schema": SCHEMA, "categories": {}}
-    manifest.setdefault("categories", {})
-    written: Dict[str, int] = {}
-    for category, entries in sorted(kb.items()):
-        if categories and category not in categories:
-            continue
-        keep = [l for l in entries
-                if str(l.get("status", "active")) == "active"]
-        path = store_dir / "lessons" / f"{_slug(category)}.json"
-        payload = {"schema": SCHEMA, "category": category,
-                   "lessons": [_portable(l) for l in keep]}
-        _atomic(path, json.dumps(payload, indent=2, sort_keys=True,
-                                 ensure_ascii=False))
-        manifest["categories"][category] = {
-            "file": f"lessons/{_slug(category)}.json",
-            "sha256": _sha(path), "lessons": len(keep)}
-        written[category] = len(keep)
-    manifest["schema"] = SCHEMA
-    manifest["updated_at"] = time.time()
-    manifest["generator"] = "open-dream-rsi"
-    _atomic(manifest_path, json.dumps(manifest, indent=2, sort_keys=True,
-                                      ensure_ascii=False))
-    if git:
-        _git(store_dir, "add", "-A")
-        if _git(store_dir, "status", "--porcelain"):
-            name = os.environ.get("ODR_GIT_AUTHOR_NAME", "open-dream-rsi")
-            email = os.environ.get("ODR_GIT_AUTHOR_EMAIL", "odr@users.noreply.github.com")
-            _git(store_dir, "-c", f"user.name={name}", "-c", f"user.email={email}",
-                 "commit", "-m", message or
-                 f"odr lessons export: {sum(written.values())} lesson(s) "
-                 f"in {len(written)} category(ies)")
-            if push:
-                _git(store_dir, "push")
-    return StoreStatus(ok=True, location=str(store_dir), git=git,
-                       categories=written)
-
-
-# -- import ---------------------------------------------------------------------
-
-def import_lessons(store: "str | Path", memory_or_root: Any, *,
-                   categories: Optional[List[str]] = None) -> Dict[str, int]:
-    """Merge lessons from a store into the local KB as STAGING.
-
-    Nothing is trusted: manifest checksums are verified (mismatch aborts),
-    every lesson passes the structural gate, and the ALM records
-    CANDIDATE -> VALIDATED — activation still requires the local
-    paired-replay gate. Returns per-category import counts."""
-    from open_dream_rsi.core.curator import (curate_lessons,
-                                             validate_lesson_items)
-    from open_dream_rsi.lifecycle import (ArtifactLifecycleError,
-                                          ArtifactLifecycleManager)
-
-    root = _memory_root(memory_or_root)
-    store_dir = resolve_store(store, cache_root=root)
-    manifest = _load_json(store_dir / "manifest.json", None)
-    if not isinstance(manifest, dict) or manifest.get("schema") != SCHEMA:
-        raise LessonShareError(
-            f"missing or unsupported manifest.json (want schema {SCHEMA})")
-    alm = ArtifactLifecycleManager(root)
-    imported: Dict[str, int] = {}
-    for category, meta in sorted(manifest.get("categories", {}).items()):
-        if categories and category not in categories:
-            continue
-        rel = str(meta.get("file", ""))
-        path = store_dir / rel
-        if not path.exists():
-            continue  # removed upstream: keep the local copy, delete nothing
-        if _sha(path) != meta.get("sha256"):
-            raise LessonShareError(
-                f"checksum mismatch for {rel} — the store may be tampered; "
-                "import aborted")
-        payload = _load_json(path, {})
-        items: List[Dict[str, str]] = []
-        evidence: List[str] = []
-        for l in payload.get("lessons", []):
-            if not isinstance(l, dict):
-                continue
-            try:
-                items.extend(validate_lesson_items(
-                    [{"trigger": l.get("trigger", ""),
-                      "text": l.get("text", "")}], 1))
-                evidence.extend(str(e) for e in (l.get("evidence") or []))
-            except Exception:
-                continue  # structural failure: skip this lesson, keep the rest
-        if not items:
-            continue
-        result = curate_lessons(_local_lessons(root, category), items,
-                                evidence=evidence[:12], staging=True)
-        _write_category(root, category, result.entries)
-        for entry in result.added:
-            key = str(entry.get("trigger", ""))
-            try:
-                from open_dream_rsi.core.curator import lesson_key
-                key = lesson_key(entry)
-                cand = alm.register_candidate(
-                    "lesson",
-                    {k: entry.get(k) for k in ("trigger", "text", "evidence")
-                     if entry.get(k)},
-                    slot=f"lesson:{category}:{key}",
-                    created_by=f"lesson_store:{store_dir.name}")
-                alm.validate(cand.artifact_id, actor="alm")
-            except ArtifactLifecycleError:
-                pass  # already live under this identity — merge was enough
-        imported[category] = len(items)
-    return imported
-
-
-def _local_lessons(root: Path, category: str) -> List[Dict[str, Any]]:
-    data = _load_json(root / "lessons.json", {})
-    return [dict(l) for l in data.get(category, [])]
-
-
-def _write_category(root: Path, category: str,
-                    entries: List[Dict[str, Any]]) -> None:
-    data = _load_json(root / "lessons.json", {})
-    if entries:
-        data[category] = entries
-    else:
-        data.pop(category, None)
-    _atomic(root / "lessons.json", json.dumps(data, indent=2,
-                                              ensure_ascii=False))
-
-
-# -- worlds (recorded discovery trees) + policy programs -------------------------
-
-#: Bundled worlds are replay fodder, not prompts: long result payloads are
-#: truncated and every string is secret-redacted on export.
 MAX_SHARED_STRING_CHARS = 4000
 TREES_DIR = "trees"
 POLICIES_DIR = "policies"
@@ -590,7 +447,7 @@ def import_policies(store: "str | Path", memory_or_root: Any, *,
             continue  # identical program already registered — no churn
         try:
             cand = alm.register_candidate("policy_program", record, slot=slot,
-                                          created_by=f"lesson_store:{Path(store_dir).name}")
+                                          created_by=f"store:{Path(store_dir).name}")
             alm.validate(cand.artifact_id, actor="alm")
             imported[category] = 1
         except ArtifactLifecycleError:
@@ -611,7 +468,7 @@ def store_status(store: "str | Path", *, cache_root: Optional[Path] = None) -> S
     errors: List[str] = []
     cats: Dict[str, int] = {}
     if isinstance(manifest, dict) and manifest.get("schema") == SCHEMA:
-        for section in ("categories", "worlds", "policies"):
+        for section in ("worlds", "policies"):
             for name, meta in sorted((manifest.get(section) or {}).items()):
                 path = store_dir / str(meta.get("file", ""))
                 if not path.exists():
@@ -619,9 +476,7 @@ def store_status(store: "str | Path", *, cache_root: Optional[Path] = None) -> S
                     continue
                 if _sha(path) != meta.get("sha256"):
                     errors.append(f"{name}: checksum MISMATCH")
-                if section == "categories":
-                    cats[name] = int(meta.get("lessons", 0))
-                elif section == "worlds":
+                if section == "worlds":
                     cats[f"world:{name}"] = int(meta.get("nodes", 0))
                 else:
                     cats[f"policy:{name}"] = 1

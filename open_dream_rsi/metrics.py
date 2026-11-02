@@ -2,13 +2,13 @@
 
 `odr metrics` (and the MCP ``odr_metrics`` tool) answers the recurring
 operator question "is the loop actually working?" straight from the memory
-dir — events.jsonl, task_outcomes.json, lessons.json, recipes.json — with
+dir — events.jsonl, task_outcomes.json, recipes.json — with
 no jq gymnastics:
 
 * cycle health: how many cycles ran, API-call spend, budget-exhaustion rate
 * solve rates: attempted/solved per category (window + all-time)
-* error and rejection classes: llm_error causes, lesson_rejected reasons
-* knowledge state: staging vs active lessons, curation throughput, recipes
+* error classes: llm_error causes
+* recipes: best-known solutions per category
 * backlog and staleness: queued probes, hours since the last full dream
 * trigger budget: the effective --budget of the most recent fire
 
@@ -23,14 +23,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-#: Reason buckets for lesson_rejected events (first-match wins).
+#: Reason buckets for llm_error events (first-match wins).
 _REJECT_CLASSES = (
-    ("empty", "empty payload (curator judged: no lesson in evidence)"),
     ("timed out", "llm timed out (generation too long for the call timeout)"),
     ("llm error: timed out", "llm timed out (generation too long for the call timeout)"),
     ("llm error", "llm error (endpoint/transport)"),
-    ("lesson validation failed", "validation failed (payload shape)"),
-    ("no failure evidence", "no failure evidence"),
 )
 
 
@@ -46,7 +43,7 @@ def collect(memory_root: "str | Path", hours: Optional[float] = None) -> Dict[st
     """Gather success metrics from a memory dir.
 
     ``hours`` limits the events-derived sections to the last N hours
-    (``None`` = all recorded history). Store files (lessons, recipes,
+    (``None`` = all recorded history). Store files (recipes,
     outcomes) are always reported as they are now.
     """
     root = Path(memory_root)
@@ -56,11 +53,6 @@ def collect(memory_root: "str | Path", hours: Optional[float] = None) -> Dict[st
     task_attempted: Counter = Counter()
     task_solved: Counter = Counter()
     llm_errors: Counter = Counter()
-    rejects: Counter = Counter()
-    gate_verdicts = 0
-    lessons_added = 0
-    lessons_merged = 0
-    corrections = 0
     fires = 0
     last_budget: Optional[int] = None
     tokens_prompt = tokens_completion = tokens_cycles = 0
@@ -94,15 +86,6 @@ def collect(memory_root: "str | Path", hours: Optional[float] = None) -> Dict[st
                         task_solved[cat] += 1
                 elif kind == "llm_error":
                     llm_errors[_classify(str(e.get("error", "")), _REJECT_CLASSES)] += 1
-                elif kind == "lesson_rejected":
-                    rejects[_classify(str(e.get("reason", "")), _REJECT_CLASSES)] += 1
-                elif kind == "lesson_gate":
-                    gate_verdicts += 1
-                elif kind == "lessons_curated":
-                    lessons_added += int(e.get("added", 0) or 0)
-                    lessons_merged += int(e.get("merged", 0) or 0)
-                elif kind == "user_correction_found":
-                    corrections += int(e.get("count", 1) or 1)
 
     log = root / "trigger.log"
     if log.exists():
@@ -137,29 +120,6 @@ def collect(memory_root: "str | Path", hours: Optional[float] = None) -> Dict[st
                     "attempted": len(records),
                     "solved": sum(1 for r in records if isinstance(r, dict) and r.get("solved")),
                 }
-
-    lessons: Dict[str, Dict[str, int]] = {}
-    lesson_usage: List[Dict[str, Any]] = []
-    lessons_path = root / "lessons.json"
-    if lessons_path.exists():
-        try:
-            raw = json.loads(lessons_path.read_text(encoding="utf-8"))
-        except ValueError:
-            raw = {}
-        for cat, items in raw.items():
-            if isinstance(items, list):
-                st = Counter(str(i.get("status", "?")) for i in items if isinstance(i, dict))
-                lessons[cat] = {"active": st.get("active", 0), "staging": st.get("staging", 0),
-                                "total": len(items)}
-                for i in items:
-                    if isinstance(i, dict):
-                        lesson_usage.append({
-                            "category": cat,
-                            "trigger": str(i.get("trigger", "")),
-                            "uses": int(i.get("uses", 0) or 0),
-                            "wins": int(i.get("wins", 0) or 0),
-                            "status": str(i.get("status", "?")),
-                        })
 
     recipes: Dict[str, float] = {}
     recipes_path = root / "recipes.json"
@@ -208,15 +168,8 @@ def collect(memory_root: "str | Path", hours: Optional[float] = None) -> Dict[st
         "tasks": {cat: {"attempted": task_attempted[cat], "solved": task_solved[cat]}
                   for cat in sorted(set(task_attempted) | set(task_solved))},
         "llm_errors": dict(llm_errors),
-        "lesson_rejections": dict(rejects),
-        "curation": {"gate_verdicts": gate_verdicts,
-                     "lessons_added": lessons_added,
-                     "lessons_merged": lessons_merged,
-                     "user_corrections": corrections},
         "tokens": {"prompt": tokens_prompt, "completion": tokens_completion,
                    "cycles_with_usage": tokens_cycles},
-        "lessons": lessons,
-        "lesson_usage": lesson_usage,
         "recipes": recipes,
         "outcomes_all_time": outcomes,
         "backlog": {"queued_tasks": queue_len,
@@ -262,39 +215,6 @@ def format_metrics(data: Dict[str, Any]) -> str:
         out.append("\nllm errors:")
         for cause, n in sorted(data["llm_errors"].items(), key=lambda x: -x[1]):
             out.append(f"  {n:5d}  {cause}")
-    if data["lesson_rejections"]:
-        out.append("\nlesson rejections:")
-        for cause, n in sorted(data["lesson_rejections"].items(), key=lambda x: -x[1]):
-            out.append(f"  {n:5d}  {cause}")
-
-    cur = data["curation"]
-    out.append(f"\ncuration: gate verdicts {cur['gate_verdicts']}, "
-               f"lessons added {cur['lessons_added']}, merged {cur['lessons_merged']}, "
-               f"user corrections {cur['user_corrections']}")
-
-    lessons = data["lessons"]
-    out.append("\nlessons (active/staging):")
-    if lessons:
-        for cat, s in sorted(lessons.items()):
-            out.append(f"  {cat}: {s['active']}/{s['staging']}")
-    else:
-        out.append("  (knowledge base empty)")
-    usage = data.get("lesson_usage") or []
-    if usage:
-        out.append("\nlesson usage (uses -> wins, credit rate; uses/wins come from "
-                   "record_lesson_usage: surfaced into proposals / task solved):")
-        def _dead(u):
-            return u["wins"] == 0 and u["uses"] >= 4  # mirrors curator.PRUNE_MIN_USES
-        ranked = sorted(usage, key=lambda u: (0 if _dead(u) else 1,
-                                              -u["uses"], -u["wins"], u["trigger"]))
-        shown = ranked[:12]
-        for u in shown:
-            rate = f"{100.0 * u['wins'] / u['uses']:.0f}%" if u["uses"] else "-"
-            flag = "  <-- dead (>=4 uses, 0 wins)" if _dead(u) else ""
-            out.append(f"  {u['category']} | {u['trigger']}: {u['uses']} -> "
-                       f"{u['wins']} ({rate}){flag}")
-        if len(ranked) > len(shown):
-            out.append(f"  ...{len(ranked) - len(shown)} more")
     recipes = data["recipes"]
     if recipes:
         out.append("recipes: " + ", ".join(f"{c}={s:g}" for c, s in sorted(recipes.items())))
@@ -306,7 +226,7 @@ def format_metrics(data: Dict[str, Any]) -> str:
         out.append("\nall-time outcomes: " + ", ".join(
             f"{c} {s['solved']}/{s['attempted']}" for c, s in sorted(outcomes.items())))
     if zero:
-        out.append("  headroom flags (>=10 attempts, 0 solves): " + ", ".join(sorted(zero)))
+        out.append("  zero-solve families (>=10 attempts, 0 solves): " + ", ".join(sorted(zero)))
 
     backlog = data["backlog"]
     out.append(f"\nbacklog: {backlog['queued_tasks']} queued task(s)")

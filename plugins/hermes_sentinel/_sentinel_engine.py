@@ -148,7 +148,7 @@ class SentinelObservation:
     * ``in_session_count``  — recurrence inside the current episode; known
       to the agent at this node, safe for replay.
     * ``cross_session_count`` — knowledge from OTHER episodes (possibly
-      future ones); live hosts and the curator may use it, it must NEVER
+      future ones); live hosts may use it, it must NEVER
       enter replay-visible node state. Use ``to_world_dict()`` for nodes.
     """
 
@@ -163,7 +163,7 @@ class SentinelObservation:
     blocked: bool = False               # set by a co-located gate (PermuteGate), not by the engine
 
     def to_dict(self) -> Dict[str, Any]:
-        """Full view — live hosts, curator, event log. Contains cross-session
+        """Full view — live hosts, event log. Contains cross-session
         counters, so NEVER persist this into replay-visible node state."""
         return {
             "signature": self.signature,

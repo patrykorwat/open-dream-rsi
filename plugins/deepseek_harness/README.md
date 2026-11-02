@@ -141,7 +141,7 @@ resolves an endpoint itself — `OPENAI_*` env, a preset
 
 `toolCallTimeoutMs: 1800000` (30 min) replaces the 60 s default because
 `odr_run_once` / `odr_dream` run bounded improvement cycles that can take
-tens of minutes. `odr_status`, `odr_recipes`, `odr_lessons` and
+tens of minutes. `odr_status`, `odr_recipes` and
 `odr_add_task` return in milliseconds.
 
 ## Verify

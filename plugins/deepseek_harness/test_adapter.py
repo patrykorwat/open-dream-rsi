@@ -166,7 +166,7 @@ class TestOverlayCommandSpeaksMCP(unittest.TestCase):
             names = {t["name"] for t in tools}
             self.assertEqual(
                 names,
-                {"odr_status", "odr_recipes", "odr_lessons",
+                {"odr_status", "odr_recipes",
                  "odr_add_task", "odr_run_once", "odr_dream"})
 
 

@@ -14,18 +14,10 @@
 #   ODR_WS_GLOB       glob of MEMORY DIRS, one dream per match
 #                     (default: ~/.dream_rsi; fleet example:
 #                      /opt/odr/workspaces/*/odr-mem — no spaces)
-#   ODR_SOURCE        cursor | hermes | claude   (default: cursor)
 #   ODR_PROVIDER      cursor-agent (default) | openai | local | goose
 #   ODR_MODEL         optional model pin (prefer unset: auto-discovery)
 #   ODR_ENV_FILE      KEY=VALUE file sourced into the dream env
 #                     (OPENAI_BASE_URL / OPENAI_API_KEY / ...)
-#   ODR_SKILLS_OUT    optional --skills-out dir: every dream republishes
-#                     ACTIVE lessons there as SKILL.md files (the host
-#                     agent's discovery bridge, e.g. ~/.hermes/skills)
-#   ODR_CURSOR_USER_DIR  optional --cursor-user-dir override
-#   ODR_SESSIONS_DB   required when ODR_SOURCE=hermes (the state.db path)
-#   ODR_INGEST        1 (default) runs the evidence ingest; 0 skips --source
-#                     (heartbeat-only cycles)
 #   ODR_BUDGET        --budget per full dream   (default: 100)
 #   ODR_STAGGER       seconds between workspaces (default: 1)
 #
@@ -38,11 +30,9 @@ set -u
 PY="${ODR_PY:-python3}"
 PKG="${ODR_PKG:-}"
 GLOB="${ODR_WS_GLOB:-$HOME/.dream_rsi}"
-SOURCE="${ODR_SOURCE:-cursor}"
 PROVIDER="${ODR_PROVIDER:-cursor-agent}"
 MODEL="${ODR_MODEL:-}"
 ENV_FILE="${ODR_ENV_FILE:-}"
-INGEST="${ODR_INGEST:-1}"
 STAGGER="${ODR_STAGGER:-1}"
 BUDGET="${ODR_BUDGET:-100}"
 
@@ -67,11 +57,6 @@ if ! "$PY" -c "import open_dream_rsi" >/dev/null 2>&1; then
   exit 2
 fi
 
-if [ "$SOURCE" = "hermes" ] && [ -z "${ODR_SESSIONS_DB:-}" ]; then
-  say "FAIL: ODR_SOURCE=hermes needs ODR_SESSION_DB (the Hermes state.db path)"
-  exit 2
-fi
-
 # shellcheck disable=SC2206  # glob expansion is the point
 dirs=( $GLOB )
 if [ "${#dirs[@]}" -eq 0 ] || [ ! -e "${dirs[0]:-}" ]; then
@@ -82,13 +67,7 @@ fi
 ok=0; fail=0
 for d in "${dirs[@]}"; do
   args=( -m open_dream_rsi --memory "$d" dream --provider "$PROVIDER" --budget "$BUDGET" )
-  if [ "$INGEST" = "1" ]; then
-    args+=( --source "$SOURCE" )
-    [ -n "${ODR_SESSIONS_DB:-}" ] && args+=( --sessions "$ODR_SESSIONS_DB" )
-    [ -n "${ODR_CURSOR_USER_DIR:-}" ] && args+=( --cursor-user-dir "$ODR_CURSOR_USER_DIR" )
-  fi
   [ -n "$MODEL" ] && args+=( --model "$MODEL" )
-  [ -n "${ODR_SKILLS_OUT:-}" ] && args+=( --skills-out "$ODR_SKILLS_OUT" )
 
   say "--- $d ($(date -u +%FT%TZ))"
   if "$PY" "${args[@]}"; then

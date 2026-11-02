@@ -81,9 +81,8 @@ def run_arm(
             client=client, memory=memory, tasks=tasks,
             api_call_budget=budget, dream_iterations=dream_iterations,
             # This benchmark isolates dreaming + persistent memory; the
-            # knowledge curator, policy-code and thought arms have their own
+            # policy-code and thought arms have their own
             # benchmarks (bench-policy) — keep the machinery under test pure.
-            enable_knowledge=False,
             enable_thoughts=False,
             # Published arm numbers are byte-stable: the fair queue must not
             # reorder these tasks (benchmarks size their budget per task set).

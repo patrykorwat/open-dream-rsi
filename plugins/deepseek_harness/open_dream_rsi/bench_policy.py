@@ -24,7 +24,7 @@ expansion strategy differs):
   Sentinel facts: nodes whose error class keeps repeating are recorded
   BLOCKED (choice removal, the TravelPlanner-measured mechanism), and the
   promoted policy reads ``sentinel_blocked`` to skip them — structure
-  over luck: no epsilon, no lessons, no thoughts.
+  over luck: no epsilon, no thoughts.
 
 The scripted model plays two roles deterministically (like ``MockLLM`` in
 ``bench.py``): a task solver following the family ladder, and a policy
@@ -149,18 +149,6 @@ def choose_action(frontier, step):
 """
 
 
-#: The lesson the scripted knowledge curator emits per category. The task
-#: solver treats it as a real insight: when this text is visible in the
-#: proposal prompt, an attempt on the DECOY family produces the promising
-#: (alternative-idea) code instead of more decoy polishing — i.e. the lesson
-#: causally changes what the model does, which is what the knowledge arm
-#: measures. Like EXPLORER_POLICY, the point is the gate + wiring, not the
-#: model: a real LLM writes the lesson text from the same failure evidence.
-TRAP_LESSON_TEXT = (
-    "A plausible branch whose verifier errors never change will never "
-    "improve; re-open the low-scoring sibling branch where the fix idea "
-    "first appeared, then submit as soon as it passes."
-)
 
 
 #: The policy program the scripted policy-writer returns when the recorded
@@ -252,14 +240,12 @@ class TrapSolver:
     lock-in is the failure mode this benchmark measures against; epsilon
     breaks it by luck, a good exploration policy breaks it by structure
     (visit unvisited nodes, re-enter branches whose recorded outcome beats
-    their own score), and a curated lesson breaks it by memory: when
-    TRAP_LESSON_TEXT is visible in the prompt, decoy-family attempts are
-    redirected to the promising alternative — knowledge replacing luck.
+    their own score).
 
-    The thought arm adds a fourth causal route: when thoughts are on, every
+    The thought arm adds a third causal route: when thoughts are on, every
     reply carries ``PLAN: <idea phrase>`` and proposals see the branch's
     tried-idea ledger. The scripted solver treats the ledger as real
-    semantic memory, EXACTLY as generously as it treats a curated lesson:
+    semantic memory:
     under the seed, a repeatedly-polished (or decayed) decoy idea in the
     ledger redirects to the promising idea — the ledger NEVER shortcuts to
     the fix; reaching it still requires expanding the promising node. The
@@ -268,14 +254,12 @@ class TrapSolver:
 
     Policy-generation calls (system prompt contains 'exploration policy')
     return EXPLORER_POLICY — the candidate the replay gate must validate and
-    promote on evidence. Curation calls (system prompt contains 'knowledge
-    curator') return the TRAP_LESSON_TEXT lesson for the asked category.
+    promote on evidence.
     """
 
     def __init__(self) -> None:
         self.calls = 0
         self.policy_calls = 0
-        self.curator_calls = 0
         self._ladder: Dict[Any, int] = {}
 
     # -- helpers -----------------------------------------------------------
@@ -303,10 +287,6 @@ class TrapSolver:
     def _plan_requested(system: str) -> bool:
         return "PLAN:" in system
 
-    @staticmethod
-    def _lesson_visible(user: str) -> bool:
-        """True when the curated KB surfaced its decoy-trap lesson."""
-        return TRAP_LESSON_TEXT[:60] in user
 
     def _family(self, suite: TrapSuite, branch: str, prompt: str) -> str:
         if suite.fix.strip() in branch:
@@ -331,27 +311,17 @@ class TrapSolver:
                 # blocked-aware explorer instead of the plain round-robin
                 return f"```python\n{SENTINEL_EXPLORER_POLICY}\n```"
             return f"```python\n{EXPLORER_POLICY}\n```"
-        if "knowledge curator" in system:
-            self.curator_calls += 1
-            m = re.search(r"Category \[([\w]+)\]", user)
-            cat = m.group(1) if m else "task"
-            item = {"trigger": f"{cat} decoy trap", "text": TRAP_LESSON_TEXT}
-            return "```json\n" + json.dumps([item]) + "\n```"
         m = re.search(r"Task \[([\w]+)\]", user)
         cat = m.group(1) if m else "?"
         suite = next(s for s in TRAP_SUITES if s.category == cat)
         if suite.fix.strip() in user:  # recipe warm start or fix branch visible
             return self._reply(suite.fix, "fix", system)
         fam = self._family(suite, self._branch_section(user), user)
-        if fam in ("decoy", "low") and self._lesson_visible(user):
-            # the lesson worked: the model abandons decoy polishing for the
-            # promising alternative idea instead of re-polishing the trap
-            return self._reply(suite.promising, "promising", system)
         if fam == "seed":
-            # thought-conditioned redirection, EXACTLY as generous as the
-            # lesson arm: the ledger can only redirect polishing of a dead
-            # idea to the alternative idea — it never shortcuts to the fix
-            # (reaching the fix still requires expanding the promising node)
+            # thought-conditioned redirection: the ledger can only redirect
+            # polishing of a dead idea to the alternative idea — it never
+            # shortcuts to the fix (reaching the fix still requires expanding
+            # the promising node)
             ledger = self._ideas_section(user)
             if ledger.count(IDEA_PHRASES["decoy"]) >= 2 \
                     or (IDEA_PHRASES["decoy"] in ledger and IDEA_PHRASES["low"] in ledger):
@@ -390,29 +360,23 @@ class TrapSolver:
 ARMS: Dict[str, Dict[str, Any]] = {
     # All baselines run with enable_thoughts=False explicitly: the runtime
     # default is True (thoughts ship on), and the arms must stay pure.
-    "greedy":         dict(enable_policy_code=False, enable_knowledge=False,
+    "greedy":         dict(enable_policy_code=False,
                            enable_thoughts=False, explore_epsilon=0.0),
-    "epsilon_greedy": dict(enable_policy_code=False, enable_knowledge=False,
+    "epsilon_greedy": dict(enable_policy_code=False,
                            enable_thoughts=False, explore_epsilon=0.3),
-    "evolved_policy": dict(enable_policy_code=True,  enable_knowledge=False,
+    "evolved_policy": dict(enable_policy_code=True,
                            enable_thoughts=False, explore_epsilon=0.3),
-    # Knowledge arm: no LLM-written policy code — only the curated lesson KB
-    # (distil -> validate -> retrieve -> usage-prune) vs epsilon_greedy. Any
-    # improvement is attributable to knowledge, not to exploration heuristics.
-    "knowledge_curator": dict(enable_policy_code=False, enable_knowledge=True,
-                              enable_thoughts=False, explore_epsilon=0.3),
     # Thought arm (the shipped default configuration): PLAN lines + tried-idea
-    # ledger + semantic stagnation steering, without policy code or curated
-    # KB. Any improvement over epsilon_greedy is attributable to thoughts.
-    "thought_guided":   dict(enable_policy_code=False, enable_knowledge=False,
+    # ledger + semantic stagnation steering, without policy code. Any improvement over epsilon_greedy is attributable to thoughts.
+    "thought_guided":   dict(enable_policy_code=False,
                              explore_epsilon=0.3, enable_thoughts=True),
     # Sentinel-guided arm: the runtime gets a repeat-block Sentinel engine
     # (wired by run_policy_arm from the sentinel_repeat_block key, which
     # must never reach AutoRSIRuntime itself); the LLM-written policy reads
     # sentinel_blocked and stops re-picking nodes whose error class keeps
     # repeating — the TravelPlanner choice-removal mechanism, ported to
-    # exploration structure. No epsilon, no lessons, no thoughts.
-    "sentinel_guided":  dict(enable_policy_code=True,  enable_knowledge=False,
+    # exploration structure. No epsilon, no thoughts.
+    "sentinel_guided":  dict(enable_policy_code=True,
                              enable_thoughts=False, explore_epsilon=0.0,
                              sentinel_repeat_block=2),
 }
@@ -427,7 +391,6 @@ class PolicyArmReport:
     solves_total: int
     api_calls_total: int
     policy_calls: int
-    curator_calls: int
     mean_calls_per_solve: float
     mean_calls_per_task_cycle: float
     mean_solve_rate_by_cycle: List[float] = field(default_factory=list)
@@ -451,7 +414,7 @@ def run_policy_arm(arm: str, cfg: Dict[str, Any], cycles: int, budget: int,
     seeds agree there (a useful sanity property, asserted in tests).
     """
     t0 = time.time()
-    total_solves = total_calls = total_policy = total_curator = 0
+    total_solves = total_calls = total_policy = 0
     rates: List[List[float]] = []
     # The sentinel arm wires a repeat-block engine into the runtime: error
     # classes repeating >= threshold inside the episode are recorded BLOCKED
@@ -485,14 +448,13 @@ def run_policy_arm(arm: str, cfg: Dict[str, Any], cycles: int, budget: int,
             total_calls += report.api_calls
             total_solves += report.tasks_solved
         total_policy += solver.policy_calls
-        total_curator += solver.curator_calls
     mean_rates = [round(sum(r[c] for r in rates) / len(rates), 1)
                   for c in range(cycles)]
     denom = max(len(seeds) * cycles * len(_trap_tasks()), 1)
     return PolicyArmReport(
         arm=arm, cycles=cycles, runs=len(seeds), tasks_total=len(_trap_tasks()),
         solves_total=total_solves, api_calls_total=total_calls,
-        policy_calls=total_policy, curator_calls=total_curator,
+        policy_calls=total_policy,
         mean_calls_per_solve=round(total_calls / max(total_solves, 1), 2),
         mean_calls_per_task_cycle=round(total_calls / denom, 3),
         mean_solve_rate_by_cycle=mean_rates,
@@ -525,8 +487,8 @@ def to_markdown(summary: Dict[str, Any]) -> str:
         f"{summary['cycles']} cycles × {summary['tasks']} tasks "
         f"(budget {summary['budget_per_cycle']} calls/cycle)",
         "",
-        "| arm | solves | solve rate | API calls | calls / solve | policy calls | curator calls |",
-        "|---|---|---|---|---|---|---|",
+        "| arm | solves | solve rate | API calls | calls / solve | policy calls |",
+        "|---|---|---|---|---|---|",
     ]
     slots = summary["slots"]
     for a in summary["arms"]:
@@ -534,17 +496,14 @@ def to_markdown(summary: Dict[str, Any]) -> str:
         cps = "∞" if a["solves_total"] == 0 else a["mean_calls_per_solve"]
         lines.append(
             f"| {a['arm']} | {a['solves_total']}/{slots} | {rate:.0f}% | "
-            f"{a['api_calls_total']} | {cps} | {a['policy_calls']} | "
-            f"{a.get('curator_calls', 0)} |")
+            f"{a['api_calls_total']} | {cps} | {a['policy_calls']} |")
     lines += ["",
               f"Score-greedy exploration solves **{summary['greedy_solves']}/{slots}** "
               "trap tasks and then burns its whole budget re-polishing the decoy; "
               "replay-gated LLM-written policies reach the hidden fixes and reuse "
-              "them as warm starts; the curated knowledge base lets epsilon alone "
-              "spend luck elsewhere because the trap itself is remembered; the "
-              "sentinel-guided arm re-derives the same escape from structured "
-              "failure facts — nodes whose error class keeps repeating are "
-              "skipped, no luck and no lesson text required.", ""]
+              "them as warm starts; the sentinel-guided arm re-derives the same "
+              "escape from structured failure facts — nodes whose error class "
+              "keeps repeating are skipped, no luck required.", ""]
     return "\n".join(lines)
 
 
@@ -559,10 +518,10 @@ def to_svg(summary: Dict[str, Any], width: int = 960, height: int = 300,
     cycles = summary["cycles"]
     dark = theme == "dark"
     colors = ({"greedy": "#e5534b", "epsilon_greedy": "#d4a72c", "evolved_policy": "#3fb950",
-               "knowledge_curator": "#58a6ff", "thought_guided": "#bc8cff",
+               "thought_guided": "#bc8cff",
                "sentinel_guided": "#f0883e"} if dark else
               {"greedy": "#c0392b", "epsilon_greedy": "#b8860b", "evolved_policy": "#1e7d3c",
-               "knowledge_curator": "#1f6fb2", "thought_guided": "#6f42c1",
+               "thought_guided": "#6f42c1",
                "sentinel_guided": "#d97706"})
     palette = dict(bg="#0d1117", grid="#21262d", axis="#8b949e", text="#c9d1d9") if dark \
         else dict(bg="#ffffff", grid="#d8dee4", axis="#57606a", text="#24292f")

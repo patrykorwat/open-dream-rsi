@@ -16,7 +16,7 @@ configuration unchanged from the dev split; official test split never
 touched. Arms interleaved task-by-task per pass (paired, McNemar-ready).
 The gate arm is *choice removal*, not persuasion: past 36 of 45 tool calls
 the sandbox refuses to serve (all text channels off). The gate alone is the
-entire arm — no policy, recipe or lesson text enters these episodes — so the
+entire arm — no policy or recipe text enters these episodes — so the
 delta measures the fixed call-cutoff intervention itself, not learned
 content; the learned machinery is validated separately on the scripted
 suites above.
@@ -86,16 +86,15 @@ Solve-rate self-checks saturate on easy suites and cannot tell good
 exploration from luck, so `bench-policy` hides each fix behind a
 *low-scoring* branch (passes 1/3 tests) past a *plausible decoy* (passes 2/3
 forever). A score-greedy loop locks onto the decoy and starves; escaping
-requires structural exploration. Six arms, one scripted solver, one budget:
+requires structural exploration. Five arms, one scripted solver, one budget:
 
-| arm | solves | solve rate | API calls | calls / solve | policy calls | curator calls |
-|---|---|---|---|---|---|---|
-| greedy | 0/120 | 0% | 480 | ∞ | 0 | 0 |
-| epsilon_greedy | 29/120 | 24% | 405 | 13.97 | 0 | 0 |
-| **evolved_policy** | **93/120** | **78%** | **249** | **2.68** | 26 | 0 |
-| **knowledge_curator** | **87/120** | **72%** | 330 | 3.79 | 0 | 27 |
-| **thought_guided** | **120/120** | **100%** | **164** | **1.37** | 0 | 0 |
-| **sentinel_guided** | **102/120** | **85%** | 219 | 2.15 | 15 | 0 |
+| arm | solves | solve rate | API calls | calls / solve | policy calls |
+|---|---|---|---|---|---|
+| greedy | 0/120 | 0% | 480 | ∞ | 0 |
+| epsilon_greedy | 29/120 | 24% | 405 | 13.97 | 0 |
+| **evolved_policy** | **93/120** | **78%** | **249** | **2.68** | 26 |
+| **thought_guided** | **120/120** | **100%** | **164** | **1.37** | 0 |
+| **sentinel_guided** | **102/120** | **85%** | 219 | 2.15 | 15 |
 
 ```bash
 python -m open_dream_rsi bench-policy --cycles 8 --format md
@@ -105,15 +104,14 @@ The per-arm explanations and ablations (ledger-only, engine-off), the pinned
 invariants, and the `gate-replay` promotion-rule replayer:
 **[docs/self-checks.md](self-checks.md)**.
 
-![Decoy-trap suite: per-cycle solve rate, six arms](screenshots/odr_policy_bench.png)
+![Decoy-trap suite: per-cycle solve rate, five arms](screenshots/odr_policy_bench.svg)
 
 ---
 
-## What the loop learned about memory (honest results)
+## Why there is no lesson curation (honest results)
 
-The knowledge curator distils verifier failures into short, validated,
-deduplicated **lessons** — pure text, never executed. Live-model replay,
-however, proved that fresh lessons are *hazardous by default*:
+Live-model replay of prompt-injected lessons showed they are *hazardous by
+default*:
 
 - Structurally perfect lessons (passed every schema/caps gate) dropped
   solve-rate **18/20 → 6/20** on a greedy decoder: "keep checking"-style
@@ -128,28 +126,10 @@ however, proved that fresh lessons are *hazardous by default*:
   was actively harmful (11/20, p=0.008 — recency makes the model *act* on
   facts that were inert mid-prompt).
 
-The shipped design encodes all of that: lessons are `staging` candidates
-that must pass a paired-replay gate (net ≥ 1, **zero** solve→fail
-regressions, explicit stop clause) before any prompt sees them; proposal
-prompts frame the KB as declarative background; and a per-category
-**headroom verdict** (skip curation when recent solve-rate ≥ 0.7 *and*
-calls/solve ≤ 5) spends zero curator/gate calls where the cold baseline
-already wins. Guidance pays a perturbation tax — the loop only pays it
-where there is measurable headroom to spend it against.
+The library shipped a staging-gated lesson KB through 0.3.15; 0.4.0 removes
+prompt-lesson curation entirely. The replay-first principle itself stays:
+policies are still promoted only on counterfactual replay evidence — the
+one evidence class with cheap, objective ground truth (exit code, timeout,
+empty payload) is the one the loop learns from. Full protocols and numbers:
+paper/main.tex.
 
-### Verdicts must be replayable (why lessons anchor on tool calls)
-
-Tool results are the only evidence class with cheap, objective ground
-truth — exit code, timeout, empty payload, retrieved content — so the
-paired-replay gate can re-execute the same moment and decide. Prose
-quality ("was this plan good?") has no such oracle: an LLM judge cannot
-be re-run into a decision, only re-sampled into noise — and that noise
-is measured, not hypothetical. Trusting freshly distilled lessons
-*without* replay dropped a greedy solver from 18/20 to 6/20, and the one
-noise-promoted lesson that ever reached production (an anodyne "answer
-more directly") won its coin flip precisely because it rarely hurt —
-hence the confirmed-strict-win promotion. The loop therefore learns
-where truth is cheap and treats everything else as unevidenced material,
-not knowledge. The user's own in-session corrections are a second evidence
-class, fed through the same staging → replay-gate discipline (see
-[sessions.md](sessions.md)).

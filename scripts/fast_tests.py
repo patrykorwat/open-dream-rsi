@@ -17,7 +17,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 SLOW_MODULES = {
     "test_bench_policy",           # ~87 s: deterministic bench-policy contracts
-    "test_curator",                # ~16 s: curator + headroom + lesson caps
     "test_sandbox_hardening",      # ~5 s: real subprocess spawns
     "test_sentinel_audit_replay",  # ~4 s: 30-day replay fixture
     "test_bench",                  # ~2 s: bench contract

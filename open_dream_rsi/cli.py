@@ -61,7 +61,6 @@ def cmd_loop(args: argparse.Namespace) -> int:
         max_tokens=args.max_tokens,
         enable_policy_code=not args.no_policy_code,
         enable_evolution_stop=bool(getattr(args, "evolution_stop", False)),
-        enable_knowledge=not args.no_knowledge,
         enable_thoughts=not args.no_thoughts,
         enable_judge=not args.no_judge,
     )
@@ -80,17 +79,10 @@ def cmd_status(args: argparse.Namespace) -> int:
     memory = DreamMemory(args.memory)
     print(f"Memory root: {memory.root.resolve()}")
     for name, label in (("policies.json", "Dreamed policies"),
-                        ("recipes.json", "Best-known solutions"),
-                        ("lessons.json", "Curated knowledge (lessons)")):
+                        ("recipes.json", "Best-known solutions")):
         data = memory._load(memory.root / name, {})
         print(f"\n{label}: {len(data)}")
         for key, entry in data.items():
-            if name == "lessons.json":
-                print(f"  [{key}] {len(entry)} lesson(s)")
-                for l in entry:
-                    print(f"    - [{l.get('trigger', '')}] {l.get('text', '')[:80]} "
-                          f"(wins={l.get('wins', 0)} uses={l.get('uses', 0)})")
-                continue
             print(f"  [{key}] {entry.get('updated_at') or entry.get('saved_at')} "
                   f"score={entry.get('score', '-')} "
                   f"{entry.get('params', '')}")
@@ -112,108 +104,6 @@ def cmd_metrics(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_sessions(args: argparse.Namespace) -> int:
-    """Import host transcripts (Hermes state.db / Cursor state.vscdb) as
-    curator evidence — the offline second door for lessons (see README)."""
-    from open_dream_rsi.sessions import (
-        episode_failures,
-        load_episodes,
-        read_claude_code_sessions,
-        read_cursor_sessions,
-        read_hermes_sessions,
-        write_episodes,
-    )
-
-    if args.sessions_cmd == "export":
-        if args.source == "hermes":
-            eps = read_hermes_sessions(args.db or args.memory,
-                                       source=args.filter,
-                                       limit=args.limit,
-                                       redact=not args.no_redact)
-        elif args.source == "claude":
-            eps = read_claude_code_sessions(args.db, limit=args.limit,
-                                            redact=not args.no_redact)
-        else:
-            # --db accepts either the Cursor User dir or a state.vscdb copy
-            db_arg = args.db
-            db_file = db_arg if db_arg and Path(db_arg).suffix == ".vscdb" else None
-            eps = read_cursor_sessions(user_dir=None if db_file else db_arg,
-                                       db=db_file, limit=args.limit,
-                                       redact=not args.no_redact)
-        n = write_episodes(eps, args.out)
-        msgs = sum(len(e.messages) for e in eps)
-        print(f"[odr] exported {n} episode(s), {msgs} message(s) -> {args.out}")
-        if not args.no_redact:
-            print("[odr] secret redaction applied (best effort — see README)")
-        return 0
-
-    # distill: episodes -> staging lessons (gate-gated exactly like loop ones)
-    from open_dream_rsi.core.curator import (
-        KnowledgeCurator,
-        curate_lessons,
-        evidence_snippets,
-    )
-
-    eps = load_episodes(args.episodes)
-    if not eps:
-        print("[odr] no episodes to distil", file=sys.stderr)
-        return 1
-    memory = DreamMemory(args.memory)
-    provider = getattr(args, "provider", "openai")
-    if args.dry_run:
-        from open_dream_rsi.corrections import user_corrections
-        for ep in eps[: args.limit or len(eps)]:
-            fails = episode_failures(ep)
-            corrs = user_corrections(ep)
-            print(f"[{ep.source}:{ep.session_id[:12]}] {ep.title[:60]} "
-                  f"— {len(fails)} failure-shaped, {len(corrs)} correction-shaped record(s)")
-            for f in (fails + corrs)[:3]:
-                print("   ", f["errors"][0][:100])
-        return 0
-    from open_dream_rsi.cli import _build_client
-    client = _build_client(provider, args.model)
-    curator = KnowledgeCurator(client)
-    from open_dream_rsi.corrections import (
-        dedupe_corrections,
-        distillable,
-        user_corrections,
-    )
-    total_added = 0
-    ep_evidence = [(ep, episode_failures(ep), user_corrections(ep))
-                   for ep in eps]
-    all_corr = distillable(
-        dedupe_corrections([c for _, _, cs in ep_evidence for c in cs]))
-    kept = {(c.get("session_id"), c.get("msg_index")) for c in all_corr}
-    for ep, failures, corr_raw in ep_evidence:
-        corrections = [c for c in corr_raw
-                       if (c.get("session_id"), c.get("msg_index")) in kept]
-        if corrections:
-            memory.log_event("user_correction_found", source=ep.source,
-                             session_id=ep.session_id, count=len(corrections),
-                             classes=[c.get("class", "") for c in corrections][:6])
-        evidence = failures + corrections
-        if not evidence:
-            continue
-        category = args.category or (
-            Path(ep.cwd).name if ep.cwd else ep.source)
-        distilled, err = curator.distill(category, ep.title or category,
-                                         evidence, memory.get_lessons(category))
-        if err or not distilled:
-            memory.log_event("lesson_rejected", source=ep.source,
-                             session_id=ep.session_id, reason=(err or "empty")[:300])
-            continue
-        result = curate_lessons(memory.get_lessons(category), distilled,
-                                evidence=evidence_snippets(evidence))
-        memory.replace_lessons(category, result.entries)
-        memory.log_event("lessons_curated", source=ep.source,
-                         session_id=ep.session_id, category=category,
-                         added=len(result.added), merged=result.merged)
-        total_added += len(result.added)
-        print(f"[odr] {category}: +{len(result.added)} staging lesson(s) "
-              f"from {ep.source}:{ep.session_id[:12]}")
-    print(f"[odr] done — {total_added} staging lesson(s); they activate only "
-          "through the paired-replay gate (odr loop) — never before")
-    return 0
 
 
 def cmd_task(args: argparse.Namespace) -> int:
@@ -249,64 +139,37 @@ def cmd_task(args: argparse.Namespace) -> int:
 
 
 def cmd_dream(args: argparse.Namespace) -> int:
-    """Automated cycle: evidence -> candidates -> promotion gate -> skills.
+    """Automated cycle: ALM maintenance -> dreaming.
 
     The cadence is decided inside open_dream_rsi.dream (cheap maintenance
-    per call; the full world dreamer only when evidence justifies the
-    cost), so any trigger — a Hermes hook, the MCP tool, or this CLI —
-    can fire as often as it likes without overrunning the budget."""
+    per call; the full world dreamer on the age cadence), so any trigger —
+    a Hermes hook, the MCP tool, or this CLI — can fire as often as it
+    likes without overrunning the budget."""
     from open_dream_rsi.dream import dream_once
-    from open_dream_rsi.sessions import (default_claude_projects_dir,
-                                         default_cursor_user_dir)
 
     client = None
     if not args.offline:
         client = _build_client(args.provider, args.model)
-    if args.source == "cursor":
-        # the Cursor store is a User DIR (state.vscdb inside), not a db file
-        sessions_db = args.sessions or args.cursor_user_dir \
-            or str(default_cursor_user_dir())
-    elif args.source == "claude":
-        # Claude Code transcripts live in a projects DIR of JSONL files
-        sessions_db = args.sessions or str(default_claude_projects_dir())
-    else:
-        sessions_db = args.sessions
     report = dream_once(
-        args.memory, sessions_db=sessions_db, session_source=args.source,
-        skills_out=args.skills_out,
-        client=client, budget=args.budget, max_tokens=args.max_tokens,
-        category=args.category, wake=args.wake)
+        args.memory, client=client, budget=args.budget,
+        max_tokens=args.max_tokens, category=args.category, wake=args.wake)
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
 
 
-def cmd_lessons(args: argparse.Namespace) -> int:
-    """Git-backed stores: publish lessons/worlds/policies, import others'
-    knowledge as staging (see README 'Sharing lessons')."""
-    from open_dream_rsi.share import (LessonShareError, export_lessons,
-                                      export_policies, export_worlds,
-                                      import_lessons, import_policies,
+def cmd_store(args: argparse.Namespace) -> int:
+    """Git-backed stores: publish worlds/policies, import others' trees
+    and policies (see README 'Sharing worlds & policies')."""
+    from open_dream_rsi.share import (LessonShareError, export_policies,
+                                      export_worlds, import_policies,
                                       import_worlds, store_status)
 
     memory = DreamMemory(args.memory)
     try:
-        if args.lessons_cmd == "export":
-            st = export_lessons(memory, args.store, categories=args.category,
-                                 message=args.message, push=not args.no_push)
-        elif args.lessons_cmd == "import":
-            counts = import_lessons(args.store, memory,
-                                    categories=args.category)
-            if not counts:
-                print("[odr] nothing imported (empty/filtered store)")
-                return 0
-            for cat, n in sorted(counts.items()):
-                print(f"[odr] {cat}: +{n} staging lesson(s) — activate via "
-                      f"the paired-replay gate (odr loop)")
-            return 0
-        elif args.lessons_cmd == "worlds-export":
+        if args.store_cmd == "worlds-export":
             st = export_worlds(memory, args.store, task_ids=args.task,
                                message=args.message, push=not args.no_push)
-        elif args.lessons_cmd == "worlds-import":
+        elif args.store_cmd == "worlds-import":
             counts = import_worlds(args.store, memory, task_ids=args.task)
             if not counts:
                 print("[odr] nothing imported (empty/filtered store)")
@@ -315,10 +178,10 @@ def cmd_lessons(args: argparse.Namespace) -> int:
                 print(f"[odr] {tid}: imported world ({n} nodes) -> "
                       f"trees/imported/{tid}.json (evidence, never a live task)")
             return 0
-        elif args.lessons_cmd == "policies-export":
+        elif args.store_cmd == "policies-export":
             st = export_policies(memory, args.store, categories=args.category,
                                  message=args.message, push=not args.no_push)
-        elif args.lessons_cmd == "policies-import":
+        elif args.store_cmd == "policies-import":
             counts = import_policies(args.store, memory,
                                      categories=args.category)
             if not counts:
@@ -338,8 +201,8 @@ def cmd_lessons(args: argparse.Namespace) -> int:
     else:
         print(f"[odr] store: {st.location} "
               f"({'git' if st.git else 'plain dir'}, ok={st.ok})")
-        label = {"export": "lesson(s)", "worlds-export": "node(s)",
-                 "policies-export": "program(s)"}.get(args.lessons_cmd, "entry")
+        label = {"worlds-export": "node(s)",
+                 "policies-export": "program(s)"}.get(args.store_cmd, "entry")
         for cat, n in sorted(st.categories.items()):
             if ":" in cat:  # status mixes sections; derive the label per key
                 label = {"world": "node(s)", "policy": "program(s)"}[
@@ -350,7 +213,6 @@ def cmd_lessons(args: argparse.Namespace) -> int:
         for e in st.errors:
             print(f"  ! {e}")
     return 0 if st.ok else 1
-
 
 def cmd_holdout(args: argparse.Namespace) -> int:
     """Single-use holdout reservations: a preregistered eval task is consumed
@@ -391,25 +253,6 @@ def cmd_holdout(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_skills(args: argparse.Namespace) -> int:
-    """Render the curated lesson KB into Hermes-style skills (issue #3
-    boundary: only lessons that EARNED activation become a prompt)."""
-    from open_dream_rsi.sessions import lessons_to_skills
-
-    memory = DreamMemory(args.memory)
-    written = lessons_to_skills(
-        memory, args.out,
-        categories=args.category,
-        only_active=not args.include_staging)
-    if not written:
-        print("[odr] no active lessons to export "
-              "(staging lessons activate only through the paired-replay gate)")
-        return 0
-    for p in written:
-        print(f"[odr] wrote {p}")
-    print(f"[odr] {len(written)} skill(s) — point Hermes at the parent dir "
-          "(skills auto-discovery) or copy into ~/.hermes/skills/")
-    return 0
 
 
 def cmd_artifacts(args: argparse.Namespace) -> int:
@@ -466,8 +309,6 @@ def main(argv: list[str] | None = None) -> int:
                       help="anytime-valid stopping for policy evolution "
                            "(freeze regeneration after a betting-martingale "
                            "alarm; the last promoted policy stays active)")
-    loop.add_argument("--no-knowledge", action="store_true",
-                      help="disable the knowledge curator (lessons.json KB, section-4 step)")
     loop.add_argument("--no-thoughts", action="store_true",
                       help="disable thought-conditioned branching (PLAN lines, "
                            "tried-idea ledger, semantic stagnation steering; "
@@ -483,27 +324,14 @@ def main(argv: list[str] | None = None) -> int:
 
     dr = sub.add_parser(
         "dream",
-        help="automated cycle — evidence import, promotion gate, ALM "
-             "maintenance, skills publish; safe to fire from any trigger "
-             "(cadence is decided internally, not by the caller)")
-    dr.add_argument("--sessions", default=None,
-                    help="host session store to import evidence from "
-                         "(hermes: state.db path; cursor: the User dir)")
-    dr.add_argument("--source", default="hermes",
-                    choices=["hermes", "cursor", "claude"],
-                    help="kind of the --sessions store (default hermes; "
-                         "cursor reads state.vscdb directly, no MCP needed; "
-                         "claude reads ~/.claude/projects JSONL)")
-    dr.add_argument("--cursor-user-dir", default=None,
-                    help="Cursor User dir for --source cursor (default: the "
-                         "platform location, e.g. %%APPDATA%%\\Cursor\\User)")
-    dr.add_argument("--skills-out", default=None,
-                    help="render ACTIVE lessons here as SKILL.md files")
+        help="automated cycle — ALM maintenance + dreaming; safe to fire "
+             "from any trigger (cadence is decided internally, not by the "
+             "caller)")
     dr.add_argument("--provider", default="openai",
                     choices=["openai", "cursor-agent", "cursor", "local", "goose"])
     dr.add_argument("--model", default=None)
     dr.add_argument("--category", default=None,
-                    help="force one KB category (default: per-episode cwd)")
+                    help="category for the wake self-test probe")
     dr.add_argument("--budget", type=int, default=100,
                     help="max API calls for a FULL dream (default 100)")
     dr.add_argument("--max-tokens", type=int, default=100_000)
@@ -542,9 +370,8 @@ def main(argv: list[str] | None = None) -> int:
 
     metrics = sub.add_parser(
         "metrics",
-        help="success metrics — per-category solve rates, llm-error and "
-             "lesson-rejection classes, curation throughput, lesson states, "
-             "backlog; answers 'is the loop actually working?'")
+        help="success metrics — per-category solve rates, llm-error "
+             "classes, backlog; answers 'is the loop actually working?'")
     metrics.add_argument("--hours", type=float, default=None,
                          help="limit event-derived sections to the last N hours "
                               "(default: all recorded history)")
@@ -556,7 +383,7 @@ def main(argv: list[str] | None = None) -> int:
              "lineage, transition history, materialization check)")
     art.add_argument("--type", default=None,
                      help="filter by artifact type (policy_parameters, "
-                          "policy_program, recipe, lesson)")
+                          "policy_program, recipe)")
     art.add_argument("--state", default=None,
                      help="filter by lifecycle state (CANDIDATE, VALIDATED, "
                           "ACTIVE, STALE, SUPERSEDED, QUARANTINED, ARCHIVED, REJECTED)")
@@ -565,83 +392,10 @@ def main(argv: list[str] | None = None) -> int:
     art.add_argument("--json", action="store_true", help="machine-readable output")
     art.set_defaults(func=cmd_artifacts)
 
-    sess = sub.add_parser(
-        "sessions",
-        help="import host transcripts (Hermes state.db / Cursor "
-             "state.vscdb / Claude Code projects JSONL) "
-             "as curator evidence — export to JSONL, then distill into "
-             "staging lessons (promotion gate still decides activation)")
-    sess_sub = sess.add_subparsers(dest="sessions_cmd", required=True)
-
-    exp = sess_sub.add_parser("export", help="read a host store, write episodes.jsonl")
-    exp.add_argument("--source", required=True,
-                     choices=["hermes", "cursor", "claude"])
-    exp.add_argument("--db", default=None,
-                     help="path to state.db (hermes), the Cursor User dir, "
-                          "or the Claude Code projects dir (default: the "
-                          "platform location)")
-    exp.add_argument("--filter", default=None,
-                     help="hermes only: session source filter (e.g. cli, desktop)")
-    exp.add_argument("--limit", type=int, default=None)
-    exp.add_argument("--out", required=True, help="output episodes JSONL path")
-    exp.add_argument("--no-redact", action="store_true",
-                     help="DISABLE secret redaction (not recommended — chat "
-                          "history contains pasted credentials)")
-    exp.set_defaults(func=cmd_sessions)
-
-    dis = sess_sub.add_parser("distill",
-                              help="distil exported episodes into staging lessons")
-    dis.add_argument("episodes", help="episodes JSONL from 'sessions export'")
-    dis.add_argument("--category", default=None,
-                     help="KB category (default: cwd name of each episode)")
-    dis.add_argument("--provider", default="openai",
-                     choices=["openai", "cursor-agent", "cursor", "local", "goose"])
-    dis.add_argument("--model", default=None)
-    dis.add_argument("--limit", type=int, default=None)
-    dis.add_argument("--dry-run", action="store_true",
-                     help="show failure-shaped records, no LLM call")
-    dis.set_defaults(func=cmd_sessions)
-
-    sk = sub.add_parser(
-        "skills",
-        help="bridge the curated lesson KB and Hermes skills")
-    sk_sub = sk.add_subparsers(dest="skills_cmd", required=True)
-    skx = sk_sub.add_parser(
-        "export",
-        help="render active lessons into Hermes-style skills "
-             "(<out>/<category>/SKILL.md)")
-    skx.add_argument("--out", required=True,
-                     help="target skills dir (e.g. ~/.hermes/skills/odr-curated)")
-    skx.add_argument("--category", action="append", default=None,
-                     help="limit to these categories (repeatable)")
-    skx.add_argument("--include-staging", action="store_true",
-                     help="export staging lessons too (not recommended: "
-                          "staging has not earned a prompt)")
-    skx.set_defaults(func=cmd_skills)
-
     ls = sub.add_parser(
-        "lessons",
-        help="git-backed lesson stores — publish active lessons to a repo, "
-             "import others' knowledge as staging (schema odr-lessons/v1)")
-    ls_sub = ls.add_subparsers(dest="lessons_cmd", required=True)
-
-    lexp = ls_sub.add_parser("export", help="write active lessons into a store")
-    lexp.add_argument("--store", required=True,
-                      help="local dir or git URL (cloned/pulled under "
-                           "<memory>/lesson_stores/)")
-    lexp.add_argument("--category", action="append", default=None,
-                      help="limit to these categories (repeatable)")
-    lexp.add_argument("--message", default=None, help="git commit message")
-    lexp.add_argument("--no-push", action="store_true",
-                      help="commit locally but do not push")
-    lexp.set_defaults(func=cmd_lessons)
-
-    limp = ls_sub.add_parser("import",
-                             help="merge a store's lessons into the KB as staging")
-    limp.add_argument("--store", required=True,
-                      help="local dir or git URL")
-    limp.add_argument("--category", action="append", default=None)
-    limp.set_defaults(func=cmd_lessons)
+        "store",
+        help="git-backed stores: share worlds/policies, verify a store")
+    ls_sub = ls.add_subparsers(dest="store_cmd", required=True)
 
     wexp = ls_sub.add_parser("worlds-export",
                              help="add archived discovery trees to a store")
@@ -652,7 +406,7 @@ def main(argv: list[str] | None = None) -> int:
     wexp.add_argument("--message", default=None, help="git commit message")
     wexp.add_argument("--no-push", action="store_true",
                       help="commit locally but do not push")
-    wexp.set_defaults(func=cmd_lessons)
+    wexp.set_defaults(func=cmd_store)
 
     wimp = ls_sub.add_parser("worlds-import",
                              help="import a store's worlds as evidence "
@@ -660,7 +414,7 @@ def main(argv: list[str] | None = None) -> int:
     wimp.add_argument("--store", required=True, help="local dir or git URL")
     wimp.add_argument("--task", action="append", default=None,
                       help="limit to these task ids (repeatable)")
-    wimp.set_defaults(func=cmd_lessons)
+    wimp.set_defaults(func=cmd_store)
 
     pexp = ls_sub.add_parser("policies-export",
                              help="add promoted exploration-policy programs "
@@ -671,19 +425,19 @@ def main(argv: list[str] | None = None) -> int:
     pexp.add_argument("--message", default=None, help="git commit message")
     pexp.add_argument("--no-push", action="store_true",
                       help="commit locally but do not push")
-    pexp.set_defaults(func=cmd_lessons)
+    pexp.set_defaults(func=cmd_store)
 
     pimp = ls_sub.add_parser("policies-import",
                              help="register a store's policy programs as "
                                   "ALM CANDIDATE->VALIDATED (never incumbents)")
     pimp.add_argument("--store", required=True, help="local dir or git URL")
     pimp.add_argument("--category", action="append", default=None)
-    pimp.set_defaults(func=cmd_lessons)
+    pimp.set_defaults(func=cmd_store)
 
     lst = ls_sub.add_parser("status", help="verify manifest + checksums")
     lst.add_argument("--store", required=True)
     lst.add_argument("--json", action="store_true")
-    lst.set_defaults(func=cmd_lessons)
+    lst.set_defaults(func=cmd_store)
 
     hld = sub.add_parser(
         "holdout",
@@ -699,7 +453,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="optional phase label recorded with the reservation")
     hc.set_defaults(func=cmd_holdout)
 
-    hr = hld_sub.add_parser("release", help="forget a reservation (correction path)")
+    hr = hld_sub.add_parser("release", help="forget a reservation")
     hr.add_argument("--ids", nargs="+", required=True)
     hr.set_defaults(func=cmd_holdout)
 
@@ -746,23 +500,20 @@ def main(argv: list[str] | None = None) -> int:
 
     gate = sub.add_parser(
         "gate-replay",
-        help="validate the lesson promotion gate offline on recorded "
-             "baseline/warm arm JSON pairs (no model, no key)")
+        help="paired comparison of recorded baseline/arm outcome rows "
+             "(no model, no key)")
     gate.add_argument("--baseline", required=True,
                       metavar="NAME=PATH[:KEY][?f=v,...]",
-                      help="no-lessons arm: rows under top-level KEY "
+                      help="baseline arm: rows under top-level KEY "
                            "(auto-detected when unambiguous), optional "
                            "field=value row filters")
     gate.add_argument("--compare", action="append", required=True,
                       metavar="NAME=PATH[:KEY][?f=v,...]",
-                      help="lessons arm to judge against the baseline "
+                      help="arm to judge against the baseline "
                            "(repeatable)")
     gate.add_argument("--key", default="task_id",
                       help="join field on rows (e.g. krs, task_id)")
     gate.add_argument("--solved-field", default="solved")
-    gate.add_argument("--lessons", default=None, metavar="PATH",
-                      help="optional lessons.json: report stop-clause "
-                           "precondition per lesson text")
     gate.add_argument("--format", choices=["json", "md"], default="json")
     gate.set_defaults(func=cmd_gate_replay)
 
@@ -969,13 +720,8 @@ def cmd_gate_replay(args: argparse.Namespace) -> int:
     for spec in args.compare:
         name = parse_spec(spec)[0]
         arms[name] = load(spec)
-    lesson_texts = None
-    if args.lessons:
-        lessons = load(args.lessons)
-        lesson_texts = [l.get("text", "") for l in lessons]
     report = gate_replay(baseline_rows, arms, key=args.key,
-                         solved_field=args.solved_field,
-                         lesson_texts=lesson_texts)
+                         solved_field=args.solved_field)
     if args.format == "md":
         print(to_markdown(report))
     else:

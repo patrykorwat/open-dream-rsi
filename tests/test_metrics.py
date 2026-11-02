@@ -28,13 +28,7 @@ class MetricsCollectTest(unittest.TestCase):
                 {"ts": now - 50, "kind": "task", "category": "cat", "solved": True},
                 {"ts": now - 40, "kind": "task", "category": "cat", "solved": False},
                 {"ts": now - 30, "kind": "llm_error", "error": "timed out"},
-                {"ts": now - 20, "kind": "lesson_rejected", "reason": "empty payload"},
-                {"ts": now - 10, "kind": "lessons_curated", "added": 2, "merged": 1},
-                {"ts": now - 5, "kind": "lesson_gate"},
             ])
-            (root / "lessons.json").write_text(json.dumps(
-                {"cat": [{"status": "active", "trigger": "pip cache", "uses": 6, "wins": 2},
-                         {"status": "staging", "trigger": "dead one", "uses": 5, "wins": 0}]}))
             (root / "recipes.json").write_text(json.dumps(
                 {"cat": {"code": "x", "score": 0.9}}))
             (root / "task_outcomes.json").write_text(json.dumps(
@@ -52,18 +46,7 @@ class MetricsCollectTest(unittest.TestCase):
             self.assertEqual(m["cycles"]["budget_exhausted"], 1)
             self.assertEqual(m["tasks"]["cat"], {"attempted": 2, "solved": 1})
             self.assertIn("llm timed out", " ".join(m["llm_errors"]))
-            self.assertIn("empty payload", " ".join(m["lesson_rejections"]))
-            self.assertEqual(m["curation"]["lessons_added"], 2)
-            self.assertEqual(m["curation"]["gate_verdicts"], 1)
-            self.assertEqual(m["lessons"]["cat"], {"active": 1, "staging": 1, "total": 2})
-            self.assertEqual(m["lesson_usage"], [
-                {"category": "cat", "trigger": "pip cache", "uses": 6, "wins": 2, "status": "active"},
-                {"category": "cat", "trigger": "dead one", "uses": 5, "wins": 0, "status": "staging"},
-            ])
             text = format_metrics(m)
-            self.assertIn("lesson usage (uses -> wins", text)
-            self.assertIn("pip cache: 6 -> 2 (33%)", text)
-            self.assertIn("dead one: 5 -> 0 (0%)  <-- dead (>=4 uses, 0 wins)", text)
             self.assertEqual(m["recipes"], {"cat": 0.9})
             self.assertEqual(m["outcomes_all_time"]["cat"], {"attempted": 3, "solved": 1})
             self.assertEqual(m["backlog"]["queued_tasks"], 2)
@@ -80,7 +63,6 @@ class MetricsCollectTest(unittest.TestCase):
             m = collect(tmp)
             self.assertEqual(m["cycles"]["total"], 0)
             self.assertEqual(m["tasks"], {})
-            self.assertEqual(m["lessons"], {})
             self.assertIsNone(m["backlog"]["hours_since_full_dream"])
             text = format_metrics(m)  # must render, not raise
             self.assertIn("cycles: 0", text)
@@ -92,15 +74,14 @@ class MetricsCollectTest(unittest.TestCase):
                            "solved": 0, "attempted": 1, "stopped_reasons": {}},
                 "trigger": {"fires": 0, "last_budget": None},
                 "tasks": {"hard": {"attempted": 7, "solved": 0}},
-                "llm_errors": {}, "lesson_rejections": {},
-                "curation": {"gate_verdicts": 0, "lessons_added": 0,
-                             "lessons_merged": 0, "user_corrections": 0},
-                "lessons": {}, "recipes": {},
+                "llm_errors": {},
+                "tokens": {"prompt": 0, "completion": 0, "cycles_with_usage": 0},
+                "recipes": {},
                 "outcomes_all_time": {"hard": {"attempted": 10, "solved": 0}},
                 "backlog": {"queued_tasks": 0, "hours_since_full_dream": None}}
         text = format_metrics(data)
         self.assertIn("no solves", text)
-        self.assertIn("headroom flags", text)
+        self.assertIn("zero-solve families", text)
 
 
 if __name__ == "__main__":

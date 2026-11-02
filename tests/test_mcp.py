@@ -49,11 +49,10 @@ class HandshakeTests(unittest.TestCase):
         self.assertEqual(res["error"]["code"], -32601)
         self.assertNotIn("result", res)
 
-    def test_tools_list_exposes_the_seven_loop_tools(self):
+    def test_tools_list_exposes_the_six_loop_tools(self):
         names = {t["name"] for t in call("tools/list")["result"]["tools"]}
         self.assertEqual(names, {"odr_status", "odr_metrics", "odr_recipes",
-                                 "odr_lessons", "odr_add_task", "odr_run_once",
-                                 "odr_dream"})
+                                 "odr_add_task", "odr_run_once", "odr_dream"})
 
 
 class ToolTests(unittest.TestCase):
@@ -96,12 +95,9 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(task.criteria, args["criteria"])
         self.assertEqual(task.tests, [])
 
-    def test_recipes_and_lessons_empty_memory_is_clean(self):
+    def test_recipes_empty_memory_is_clean(self):
         out = payload(tool("odr_recipes", {"category": "math", "memory": self.memory}))
         self.assertFalse(out["found"])
-        out = payload(tool("odr_lessons", {"query": "nothing", "memory": self.memory}))
-        self.assertEqual(out["count"], 0)
-
     def test_recipes_returns_promoted_warm_start(self):
         from open_dream_rsi.memory import DreamMemory
 

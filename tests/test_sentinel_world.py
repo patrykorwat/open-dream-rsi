@@ -9,8 +9,8 @@ Covers commits 1+2 of the Sentinel-powered Dream-RSI integration:
   replay-safe BY CONSTRUCTION: the cross-session counter (knowledge from
   other — possibly future — episodes) can never reach node state. This is
   the prefix-only replay invariant: a historical world must not contain
-  facts from a future session (same contamination class as the
-  lesson-gate first-failure snapshot rule).
+  facts from a future session (the same contamination class as a
+  first-failure snapshot rule).
 * TreeNode persists/round-trips ``sentinel`` and ``termination_reason``
   through DreamMemory's trees/*.json; old trees without the keys load
   unchanged; the default runtime (no engine) produces None fields, so
@@ -103,7 +103,7 @@ class TestWorldDictEpistemicSplit(unittest.TestCase):
         self.assertEqual(w["repeat_world"], 1)          # episode-local only
         self.assertNotIn("cross_session_count", json.dumps(w))
         self.assertNotIn("sessions", json.dumps(w))
-        # full view keeps it (live host / curator may use it)
+        # full view keeps it (live hosts may use it)
         self.assertEqual(obs.to_dict()["cross_session_count"], 18)
 
     def test_world_dict_shape(self):

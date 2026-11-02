@@ -11,9 +11,8 @@ Run manually (an MCP client normally spawns it for you)::
 
 Tools exposed:
 
-* ``odr_status``     — what the loop has learned (policies, recipes, lessons).
+* ``odr_status``     — what the loop has learned (policies, recipes).
 * ``odr_recipes``    — best verified solution for a category (warm start).
-* ``odr_lessons``    — curated failure lessons for a category or search query.
 * ``odr_add_task``   — queue a new task so the dreamer starts working on it.
 * ``odr_run_once``   — run a single improvement cycle now (bounded by budget).
 
@@ -47,7 +46,7 @@ def _tasks_path(overrides: Dict[str, Any]) -> Path:
 
 
 def tool_odr_status(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Summarise learned policies, recipes, lessons and recent events."""
+    """Summarise learned policies, recipes and recent events."""
     from open_dream_rsi.memory import DreamMemory
 
     memory = DreamMemory(_memory_root(args))
@@ -70,7 +69,7 @@ def tool_odr_status(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def tool_odr_metrics(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Success metrics: solve rates, error/rejection classes, knowledge state."""
+    """Success metrics: solve rates and error classes."""
     from open_dream_rsi.metrics import collect
 
     hours = args.get("hours")
@@ -91,21 +90,6 @@ def tool_odr_recipes(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"category": category, "found": True, "code": recipe}
 
 
-def tool_odr_lessons(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Curated failure lessons for a category; optional text search query."""
-    from open_dream_rsi.core.curator import format_lessons, select_lessons
-    from open_dream_rsi.memory import DreamMemory
-
-    category = args.get("category", "")
-    query = args.get("query", "")
-    memory = DreamMemory(_memory_root(args))
-    if category:
-        lessons = memory.get_lessons(category)
-    else:  # search across all categories
-        all_lessons = memory._load(memory.root / "lessons.json", {})
-        lessons = [dict(l) for entries in all_lessons.values() for l in entries]
-    selected = select_lessons(lessons, query or category)
-    return {"count": len(selected), "lessons": format_lessons(selected) or "(none)"}
 
 
 def tool_odr_add_task(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -216,10 +200,9 @@ def tool_odr_run_once(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def tool_odr_dream(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Automated cycle from any trigger: evidence import, promotion gate,
-    ALM maintenance, skills publish. Cadence is decided internally (cheap
-    maintenance per call; the full world dreamer only when new evidence or
-    staleness justifies the cost), so firing this per session is safe."""
+    """Automated cycle from any trigger: ALM maintenance + dreaming.
+    Cadence is decided internally (cheap maintenance per call; the full
+    world dreamer on the age cadence), so firing this per session is safe."""
     from open_dream_rsi.dream import dream_once
     from open_dream_rsi.memory import DreamMemory
 
@@ -240,13 +223,10 @@ def tool_odr_dream(args: Dict[str, Any]) -> Dict[str, Any]:
             client = None  # no endpoint: maintenance-only cycle, still valid
     return dream_once(
         memory.root,
-        sessions_db=args.get("sessions_db") or os.environ.get("ODR_SESSIONS_DB"),
-        skills_out=args.get("skills_out") or os.environ.get("ODR_SKILLS_OUT"),
         client=client,
         budget=int(args.get("budget", 100)),
         max_tokens=int(args.get("max_tokens", 100_000)),
         category=args.get("category"),
-        min_new_evidence=int(args.get("min_new_evidence", 3)),
         max_age_seconds=float(args.get("max_age_seconds", 6 * 3600)),
         wake=args.get("wake"),
     )
@@ -267,8 +247,7 @@ TOOLS: Dict[str, Dict[str, Any]] = {
     "odr_metrics": {
         "description": "Success metrics for this Dream-RSI deployment: cycle "
                        "health (api spend, budget exhaustion), per-category "
-                       "solve rates, llm-error and lesson-rejection classes, "
-                       "curation throughput, lesson states, backlog. Answers "
+                       "solve rates, llm-error classes, backlog. Answers "
                        "'is the loop actually working?'.",
         "inputSchema": {"type": "object", "properties": {
             "hours": {"type": "number",
@@ -284,14 +263,6 @@ TOOLS: Dict[str, Dict[str, Any]] = {
             "category": {"type": "string"},
             "memory": {"type": "string"}}, "required": ["category"]},
         "fn": tool_odr_recipes,
-    },
-    "odr_lessons": {
-        "description": "Curated failure lessons distilled by the knowledge curator "
-                       "for a category (or searched by query across all categories).",
-        "inputSchema": {"type": "object", "properties": {
-            "category": {"type": "string"}, "query": {"type": "string"},
-            "memory": {"type": "string"}}},
-        "fn": tool_odr_lessons,
     },
     "odr_add_task": {
         "description": "Queue a self-contained Python task for the "
@@ -340,22 +311,14 @@ TOOLS: Dict[str, Dict[str, Any]] = {
         "fn": tool_odr_run_once,
     },
     "odr_dream": {
-        "description": "Run the automated improvement cycle: import new host "
-                       "session evidence, distil candidate lessons, run the "
-                       "promotion gate + ALM maintenance, publish earned "
-                       "lessons as skills. Safe to call after every task — "
-                       "the cadence is decided internally (cheap maintenance "
-                       "per call; the full dreamer only when new evidence or "
-                       "staleness justifies it), and concurrent calls are "
-                       "collapsed by a lock.",
+        "description": "Run the automated improvement cycle: ALM "
+                       "maintenance + dreaming. Safe to call after every "
+                       "task — the cadence is decided internally (cheap "
+                       "maintenance per call; the full dreamer on the age "
+                       "cadence), and concurrent calls are collapsed by a "
+                       "lock.",
         "inputSchema": {"type": "object", "properties": {
             "memory": {"type": "string"},
-            "sessions_db": {"type": "string",
-                            "description": "host state.db for evidence "
-                                           "(default $ODR_SESSIONS_DB)"},
-            "skills_out": {"type": "string",
-                           "description": "render ACTIVE lessons here as "
-                                         "SKILL.md (default $ODR_SKILLS_OUT)"},
             "provider": {"type": "string",
                          "enum": ["openai", "cursor", "local", "goose", "mock"]},
             "model": {"type": "string"},
@@ -364,9 +327,6 @@ TOOLS: Dict[str, Dict[str, Any]] = {
             "max_age_seconds": {"type": "number",
                                 "description": "force a full dream at least "
                                                "this often (default 21600)"},
-            "min_new_evidence": {"type": "integer",
-                                "description": "full dream when this many "
-                                               "new sessions arrive (default 3)"},
             "wake": {"type": "boolean",
                      "description": "on a FULL dream with an empty task "
                                     "queue, seed the endpoint self-test "

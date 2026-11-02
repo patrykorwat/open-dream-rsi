@@ -2,7 +2,7 @@
 
   fig_race.png   — reaction-time race: ECDF of within-session same-class
                    error gaps (fixtures/sentinel_gaps.json) against the
-                   episode boundary and the weekly curator interval.
+                   episode boundary and the weekly offline-batch interval.
   fig_arms.png   — v8/v9 injection-arm study: solve rate vs cost-per-solve,
                    cold controls marked (data: odr-bench RESULTS-replay).
 
@@ -27,7 +27,7 @@ C = {"data": "#1f77b4", "warn": "#d62728", "ok": "#2ca02c",
 
 
 def fig_race():
-    """ECDF of same-class repeat gaps vs curator horizons.
+    """ECDF of same-class repeat gaps vs offline-batch horizons.
 
     Layout discipline: the upper-left is reserved for the curve; every text
     annotation sits in the empty lower/right region with a short arrow to its
@@ -54,7 +54,7 @@ def fig_race():
                 arrowprops=dict(arrowstyle="->", color=C["warn"], lw=0.8))
     ep_med = float(np.median(episodes))
     ax.axvline(ep_med, color=C["gray"], ls=":", lw=1.2)
-    ax.annotate("episode boundary (median %.0f min):\nhorizon of ANY episode-based curator" % ep_med,
+    ax.annotate("episode boundary (median %.0f min):\nhorizon of ANY offline batch process" % ep_med,
                 xytext=(420, 0.30), xy=(ep_med * 1.05, 0.33),
                 color=C["gray"], fontsize=8,
                 arrowprops=dict(arrowstyle="->", color=C["gray"], lw=0.8))
@@ -64,7 +64,7 @@ def fig_race():
                 color=C["data"], fontsize=8,
                 arrowprops=dict(arrowstyle="->", color=C["data"], lw=0.8))
     ax.axvline(7 * 24 * 60, color=C["amber"], ls="-.", lw=1.1)
-    ax.annotate("weekly skill-curator\nwake-up (10080 min)",
+    ax.annotate("weekly offline batch\nwake-up (10080 min)",
                 xytext=(1300, 0.52), xy=(7 * 24 * 60 * 0.72, 0.55),
                 color=C["amber"], fontsize=8,
                 arrowprops=dict(arrowstyle="->", color=C["amber"], lw=0.8))

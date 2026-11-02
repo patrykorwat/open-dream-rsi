@@ -5,8 +5,8 @@ description: >-
   transform_tool_result hook, fingerprints semantic error classes
   (numbers/paths/urls normalized away), and when the same class repeats it
   appends a short declarative note to the failing result: recurrence facts
-  plus an explicit stop condition. Reacts in seconds, while the skill
-  curator only wakes weekly.
+  plus an explicit stop condition. Reacts in seconds; a scheduled
+  offline job would only react on its next wake.
 author: patrykorwat
 license: MIT
 provides_hooks:

@@ -1,6 +1,6 @@
 """Offline gate-replay validator: joins arms, applies the REAL gate rule.
 
-The validator must (1) reproduce lesson_gate_verdict decisions on synthetic
+The validator must (1) reproduce gate_verdict decisions on synthetic
 pairs, (2) tolerate the record shapes real replay harnesses emit (top-level
 list, single-key object, explicit records_key), and (3) report join stats
 honestly instead of silently comparing different task sets.
@@ -103,8 +103,8 @@ class GateReplayTests(unittest.TestCase):
         # baseline solves 3/4; arm loses every solve and gains nothing -> reject
         base = [{"task_id": f"t{i}", "solved": i != 3} for i in range(4)]
         arm = [{"task_id": f"t{i}", "solved": False} for i in range(4)]
-        report = gate_replay(base, {"lessons": arm})
-        d = report["arms"]["lessons"]
+        report = gate_replay(base, {"arm": arm})
+        d = report["arms"]["arm"]
         self.assertFalse(d["promoted"])
         self.assertEqual(d["regressions"], 3)
         self.assertLessEqual(d["net"], 0)
@@ -112,8 +112,8 @@ class GateReplayTests(unittest.TestCase):
     def test_helpful_arm_promoted(self):
         base = [{"task_id": f"t{i}", "solved": i > 0} for i in range(4)]  # t0 fails
         arm = [{"task_id": f"t{i}", "solved": True} for i in range(4)]
-        report = gate_replay(base, {"lessons": arm})
-        self.assertTrue(report["arms"]["lessons"]["promoted"])
+        report = gate_replay(base, {"arm": arm})
+        self.assertTrue(report["arms"]["arm"]["promoted"])
 
     def test_regressions_kill_a_net_positive_arm(self):
         # two fail->solve, one solve->fail: net +1 but asymmetry rejects
@@ -125,20 +125,11 @@ class GateReplayTests(unittest.TestCase):
                {"task_id": "t1", "solved": True},
                {"task_id": "t2", "solved": False},
                {"task_id": "t3", "solved": True}]
-        report = gate_replay(base, {"lessons": arm})
-        d = report["arms"]["lessons"]
+        report = gate_replay(base, {"arm": arm})
+        d = report["arms"]["arm"]
         self.assertEqual(d["gains"], 2)
         self.assertEqual(d["regressions"], 1)
         self.assertFalse(d["promoted"])
-
-    def test_stop_clause_reported_per_lesson(self):
-        base = [{"task_id": "t0", "solved": True}]
-        arm = [{"task_id": "t0", "solved": True}]
-        texts = ["fetch more pages to be sure",
-                 "check the BIP subpage once, then answer immediately"]
-        report = gate_replay(base, {"a": arm}, lesson_texts=texts)
-        flags = [s["has_stop_clause"] for s in report["stop_clauses"]]
-        self.assertEqual(flags, [False, True])
 
     def test_markdown_renders_verdicts(self):
         base = [{"task_id": "t0", "solved": True}]
@@ -172,7 +163,7 @@ class CliTests(unittest.TestCase):
                      os.path.dirname(os.path.dirname(os.path.abspath(__file__)))})
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn("REJECT", proc.stdout)
-            self.assertIn("lessons", proc.stderr)  # summary line on stderr
+            self.assertIn("arm", proc.stderr)  # summary line on stderr
 
 
 if __name__ == "__main__":

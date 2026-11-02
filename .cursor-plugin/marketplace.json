@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "Dream-RSI learning loop for Cursor: sentinel error-recurrence notes and end-of-session dream cycles fed by Cursor chats. Brains default to the cursor-agent CLI (your Cursor login) \u2014 no MCP, no proxy, no API keys.",
-    "version": "0.3.15"
+    "version": "0.4.0"
   },
   "plugins": [
     {
       "name": "open-dream-rsi",
       "source": ".",
       "description": "Dream-RSI learning loop for Cursor: sentinel error-recurrence notes and end-of-session dream cycles fed by Cursor chats. Brains default to the cursor-agent CLI (your Cursor login) \u2014 no MCP, no proxy, no API keys.",
-      "version": "0.3.15",
+      "version": "0.4.0",
       "author": {
         "name": "Patryk Orwat"
       },
@@ -22,7 +22,6 @@
       "keywords": [
         "dream-rsi",
         "self-improvement",
-        "lessons",
         "sentinel",
         "hooks"
       ],

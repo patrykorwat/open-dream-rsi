@@ -123,7 +123,7 @@ class ArmsTest(unittest.TestCase):
                          sorted(pol.mean_solve_rate_by_cycle))
 
     def test_thought_guided_arm_deterministically_escapes_the_trap(self):
-        """The thought arm must win WITHOUT luck, policy code, or lessons.
+        """The thought arm must win WITHOUT luck or policy code.
 
         Causal attribution (three parts): (1) with explore_epsilon forced to
         0 it still escapes every trap from cycle 1 — no random exploration,
@@ -142,7 +142,6 @@ class ArmsTest(unittest.TestCase):
         self.assertGreater(th.solves_total, eps.solves_total)
         self.assertLess(th.api_calls_total, eps.api_calls_total)
         self.assertEqual(th.policy_calls, 0)              # no section-3 calls
-        self.assertEqual(th.curator_calls, 0)             # no section-4 calls
         self.assertEqual(th.mean_solve_rate_by_cycle[0], 100.0)  # from cycle 1
         # (1) luck-free: zero epsilon, still perfect
         pure = dict(ARMS["thought_guided"], explore_epsilon=0.0)
@@ -177,7 +176,7 @@ class ArmsTest(unittest.TestCase):
                 rt = AutoRSIRuntime(client=TrapSolver(), memory=mem, tasks=[task],
                                     api_call_budget=12, dream_iterations=5,
                                     rng_seed=999, enable_policy_code=False,
-                                    enable_knowledge=False, explore_epsilon=0.0,
+                                    explore_epsilon=0.0,
                                     enable_thoughts=True)
                 rep = rt.run_once()
                 self.assertEqual(rep.tasks_solved, 1)
@@ -204,7 +203,7 @@ class ArmsTest(unittest.TestCase):
         mem = _DM(_tf.mkdtemp())
         rt = AutoRSIRuntime(client=TrapSolver(), memory=mem, tasks=[task],
                             api_call_budget=24, dream_iterations=10, rng_seed=700,
-                            enable_policy_code=False, enable_knowledge=False,
+                            enable_policy_code=False,
                             explore_epsilon=0.0, enable_thoughts=True)
         rt.run_once()
         tree = mem.load_tree("dedupe_t")
@@ -258,7 +257,6 @@ class SentinelGuidedArmTest(unittest.TestCase):
         self.assertLess(on.policy_calls, off.policy_calls)      # faster promotion
         self.assertGreater(on.solves_total, eps.solves_total)
         self.assertLess(on.api_calls_total, eps.api_calls_total)
-        self.assertEqual(on.curator_calls, 0)
         # no luck was involved: epsilon is 0.0 and the arm still converges
         self.assertEqual(on.mean_solve_rate_by_cycle[0], 0.0)   # no policy yet in cycle 1
         self.assertEqual(on.mean_solve_rate_by_cycle[2], 100.0) # converged by cycle 3
@@ -286,7 +284,7 @@ class SentinelGuidedArmTest(unittest.TestCase):
                     rt = _RT(client=TrapSolver(), memory=mem, tasks=[task],
                         api_call_budget=12, dream_iterations=5, rng_seed=999,
                         fair_queue=False, sentinel_engine=engine,
-                        enable_policy_code=True, enable_knowledge=False,
+                        enable_policy_code=True,
                         explore_epsilon=0.0, enable_thoughts=False)
                     rt.run_once()
                 tree = mem.load_tree(task.task_id)

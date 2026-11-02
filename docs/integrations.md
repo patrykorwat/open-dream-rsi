@@ -3,8 +3,8 @@
 Open Dream-RSI speaks **MCP** (Model Context Protocol) over stdio, so any
 MCP-speaking harness — OpenCode, Goose, Claude Code, Cursor, Zed, … — can use
 the self-improvement loop as a tool provider: your agent queues tasks, the
-dreamer solves them offline, and the agent pulls back verified recipes and
-lessons.
+dreamer solves them offline, and the agent pulls back verified
+recipes.
 
 No extra Python packages are required — the server is stdlib-only.
 
@@ -69,7 +69,7 @@ Then just talk to the agent, for example:
 
 or, when it is stuck on something the loop may already know:
 
-> "Check odr_lessons and odr_recipes for category `strutil` before you try
+> "Check odr_recipes for category `strutil` before you try
 > again."
 
 The six tools the agent sees:
@@ -78,10 +78,9 @@ The six tools the agent sees:
 |---|---|
 | `odr_status` | what the loop has learned (policies, recipes, events) |
 | `odr_recipes` | best **verified** solution for a category — use as warm start |
-| `odr_lessons` | curated failure lessons for a category / search query |
 | `odr_add_task` | queue a task (prompt + tests, or prompt + criteria) for the dreamer — test-less tasks are completion-judged |
 | `odr_run_once` | run one improvement cycle now (bounded API budget) |
-| `odr_dream` | the automated cycle: import host session evidence, distill curated lessons, run the promotion gate, publish skills |
+| `odr_dream` | the automated cycle: ALM maintenance + dreaming (cadence decided internally) |
 
 `odr_run_once` runs with **thought-conditioned branching enabled by
 default** (like the library itself): attempts record their one-line `PLAN:`,
@@ -95,7 +94,7 @@ Tip — let OpenCode consult the loop proactively: add to your project
 ```markdown
 ## Self-improvement loop (MCP: open-dream-rsi)
 - Before implementing a self-contained Python utility, call `odr_recipes`
-  and `odr_lessons` for its category; reuse a verified recipe verbatim.
+  for its category; reuse a verified recipe verbatim.
 - When you finish a hard, testable function, queue it with `odr_add_task`
   (task_id = function name, tests = your test cases) so the loop can
   dream over it offline.
@@ -107,7 +106,7 @@ Tip — let OpenCode consult the loop proactively: add to your project
   ┌────────────────────────────┐      ┌───────────────────────────────────────┐
   │ AGENT HOSTS                │      │ MEMORY — one dir per dreaming instance│
   │  Mac:  goose, claude, codex│      │  recipes.json      verified code+score│
-  │  your server:  Hermes (Docker)     │      │  lessons.json      failure lessons    │
+  │  your server:  Hermes (Docker)     │      │                                       │
   │  web:  Cowork via tunnel   │      │  policies*.json    exploration params │
   └───────────┬────────────────┘      │  trees/            dream trees (replay)│
               │ stdio (local hosts)   │  events.jsonl      audit log: per-task│
@@ -136,7 +135,7 @@ Data placement (example deployment):
 
 Sharing across agents: memory is plain JSON — mount the same directory to
 several hosts (SSHFS/tailnet) and one dreamer feeds many consumers.
-Never hand-edit `recipes.json`/`lessons.json`; go through the tools so the
+Never hand-edit `recipes.json`; go through the tools so the
 verification gate holds.
 
 ## Goose
@@ -175,8 +174,8 @@ extensions:
     name: open-dream-rsi
     description: "Dream-RSI self-improvement loop. Use odr_add_task to queue a
       Python task with tests, odr_run_once to run an improvement cycle,
-      odr_recipes/odr_lessons to reuse verified solutions and failure lessons,
-      odr_status to inspect what the loop has learned."
+      odr_recipes to reuse verified solutions, odr_status to inspect what
+      the loop has learned."
     cmd: python3
     args: ["-m", "open_dream_rsi", "mcp",
            "--tasks", "/ABSOLUTE/PATH/projects/myproject/tasks.json",
@@ -293,8 +292,8 @@ The six tools are registered prefixed per client (e.g. Hermes
 Easiest: install the bundled plugin. Hermes discovers plugin manifests in a
 repo root or one directory deep — this repo ships `odr-trigger/plugin.yaml`
 (the event-driven dream cycle: every session end fires `dream_once()` —
-evidence ingest, lesson distillation, promotion gate, ALM maintenance —
-event-driven, no cron, no schedule; overlapping triggers collapse on a lock).
+ALM maintenance + dreaming — event-driven, no cron, no schedule; overlapping
+triggers collapse on a lock).
 
 Desktop app: **Settings → Plugins → Install from Git**, paste
 `https://github.com/patrykorwat/open-dream-rsi`, review, install, enable
@@ -437,11 +436,6 @@ use `python3 -m open_dream_rsi` instead.)
 
 Check with `/mcp` inside a session.
 
-**Session import:** Claude Code transcripts under `~/.claude/projects` are
-first-class curator evidence — `odr --memory .dream_rsi dream --source
-claude` runs the whole cycle on your existing history (redacted, staged,
-gate-gated like every other source).
-
 ### Cursor (without MCP — hooks and files)
 
 Cursor installs where **MCP servers are blocked by policy** can still run
@@ -467,9 +461,9 @@ What runs where:
 | Moment | What happens |
 |---|---|
 | A tool call fails the same way twice | `odr_sentinel_hook.py` (postToolUse / postToolUseFailure) injects a `[Sentinel]` recurrence note as additional context |
-| A session ends | `odr_dream_hook.py` detaches `python -m open_dream_rsi --memory <mem> dream --source cursor` |
+| A session ends | `odr_dream_hook.py` detaches `python -m open_dream_rsi --memory <mem> dream` |
 | You queue work | `python -m open_dream_rsi task add --id <id> --category <project> --prompt "<task>" --criteria "<done when...>"` (writes `<memory>/tasks.json`; `task list` shows the queue) |
-| The dream cycle runs | it imports Cursor chats as evidence (state.vscdb is read directly — no MCP), consumes the queue, runs the lesson gate, publishes earned knowledge; log: `<memory>/dream.log` |
+| The dream cycle runs | it consumes the queue, runs the dreaming cycle and ALM housekeeping; log: `<memory>/dream.log` |
 
 The dreamer's LLM is any OpenAI-compatible endpoint: pass
 `--provider/--model` (plus `--env-file` for `OPENAI_BASE_URL` /
@@ -485,8 +479,8 @@ Since 0.3.0 the zero-proxy route is the `cursor-agent` provider: the
 dreamer runs the headless Cursor CLI (`cursor-agent -p --force
 --output-format text`) on the user's own login — no API key, no proxy; the
 model is whatever the user's Cursor uses (`--model` / `ODR_LLM_MODEL` to
-pin). A machine without the CLI is safe: the dream defers those sessions
-(never burns evidence). Install the CLI:
+pin). A machine without the CLI is safe: the dream simply runs without an
+endpoint (maintenance-only). Install the CLI:
 `irm 'https://cursor.com/install?win32=true' | iex` (Windows) or
 `curl https://cursor.com/install -fsS | bash` (macOS/Linux/WSL); verify
 with `cursor-agent --version` in a fresh terminal. The older local-proxy
@@ -498,11 +492,6 @@ cursor-openai-api login && cursor-openai-api serve   # /v1 on :3000
 export ODR_LLM_PRESET=cursor                          # preset default: :3000
 ```
 
-Feeding Cursor chats in by hand instead of the hook: `sessions export
---source cursor` (see the README's "Importing real sessions" section).
-The live database is write-ahead-logged — quit Cursor or copy
-`state.vscdb`+`-wal`+`-shm` together and pass the copy via `--db` for a
-complete snapshot.
 
 ### Claude Cowork / claude.ai connectors (remote only)
 
@@ -541,7 +530,7 @@ dsh plugin --profile <name> add dsh-open-dream-rsi
 ```
 
 The tools appear as `mcp__open_dream_rsi__<tool>` (`odr_status`,
-`odr_recipes`, `odr_lessons`, `odr_add_task`, `odr_run_once`, `odr_dream`).
+`odr_recipes`, `odr_add_task`, `odr_run_once`, `odr_dream`).
 The bundle ships the Python server inside the package — only `python3`
 (3.10+) on PATH is required, no pip install. Bundle defaults point
 `--tasks`/`--memory` at `tasks.json`/`.dream_rsi`

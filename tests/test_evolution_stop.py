@@ -95,7 +95,7 @@ class LoopWiringTest(unittest.TestCase):
         rt = AutoRSIRuntime(client=BrokenPolicyClient(), memory=mem, tasks=[task],
                             api_call_budget=24, dream_iterations=2, rng_seed=1,
                             fair_queue=False, enable_policy_code=True,
-                            enable_knowledge=False, explore_epsilon=0.0,
+                            explore_epsilon=0.0,
                             enable_thoughts=False, enable_judge=False,
                             enable_evolution_stop=True)
         import json

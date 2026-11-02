@@ -748,7 +748,7 @@ class PolicyGenerator:
                 return GenerationResult(None, score, "identical to incumbent")
             if score <= incumbent_score + 1e-9:
                 # STRICT improvement only: a tie is not evidence (the same
-                # philosophy as the lesson gate's confirmed-strict-win rule).
+                # philosophy as the promotion gate's confirmed-strict-win rule).
                 # A tying challenger must not displace a trusted incumbent.
                 return GenerationResult(
                     None, score,

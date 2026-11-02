@@ -16,8 +16,6 @@ The LLM stays **frozen**. What improves is everything *around* it:
 - the **exploration policy** (even re-written as Python code by the LLM
   itself, gated by replay before it is trusted),
 - a library of **verified solutions** (recipes) reused as warm starts,
-- **curated lessons** distilled from failures — every one of them promoted
-  only after it *measurably* helps on replay,
 - and the **world model** the policy is scored against: a Discovery Tree of
   every attempt, enriched with replay-safe error-class facts by the Sentinel
   engine.
@@ -35,9 +33,8 @@ library code, ~5.4k lines of tests, no build step.
 agent learned and reuse it as-is. ODR is an *evolving worlds* loop: every
 attempt is recorded into a Discovery Tree, and between runs the system
 dreams — replaying thousands of strategy variants against that recorded
-world. Nothing is promoted on the model's word alone: a candidate policy,
-recipe or lesson replaces the incumbent only after surviving counterfactual
-replay.
+world. Nothing is promoted on the model's word alone: a candidate policy or
+recipe replaces the incumbent only after surviving counterfactual replay.
 
 **How it compares** — stored state, how entries earn trust, runtime cost,
 against Mem0, Letta, Reflexion-style reflection, DSPy optimizers and skill
@@ -132,8 +129,8 @@ falls back to the greedy baseline.
 ## Plug in your favourite agent
 
 The loop speaks **MCP** (Model Context Protocol). One config block and your
-everyday agent can queue tasks for the dreamer, pull back verified recipes
-and consult curated lessons — **zero extra LLM setup**: the dreamer resolves
+everyday agent can queue tasks for the dreamer and pull back verified
+recipes — **zero extra LLM setup**: the dreamer resolves
 its own brain (env → local goose config → localhost vLLM), and asks the
 endpoint itself which model to use.
 
@@ -141,10 +138,9 @@ endpoint itself which model to use.
 |---|---|
 | `odr_status` | what the loop has learned (policies, recipes, events) |
 | `odr_recipes` | best **verified** solution for a category — use as warm start |
-| `odr_lessons` | curated failure lessons for a category / search query |
 | `odr_add_task` | queue a task (prompt + tests, or prompt + criteria) — test-less tasks are completion-judged |
 | `odr_run_once` | run one improvement cycle now (bounded API budget) |
-| `odr_dream` | the automated cycle: import host session evidence, distill curated lessons, run the promotion gate, publish skills |
+| `odr_dream` | the automated cycle: ALM maintenance + dreaming (cadence decided internally) |
 
 Tools are registered prefixed per client (e.g. Hermes
 `mcp_open_dream_rsi_odr_run_once`). **No model calls tools on its own
@@ -200,7 +196,6 @@ agent = DreamAgent(dreamer=dreamer, client=client)
 | Dreamed policy parameters | `policies.json` | next cycle starts from the last one's optimum |
 | Promoted policy programs | `policy_codes.json` | LLM-written `choose_action` steers expansion |
 | Recipe library | `recipes.json` | verified solutions replayed as warm starts |
-| Knowledge base | `lessons.json` | curated, replay-gated lessons (declarative text) |
 | Discovery trees | `trees/` | offline dreaming always has history; nodes optionally carry replay-safe Sentinel facts |
 | Audit log | `events.jsonl` | append-only record of every decision |
 | Holdout reservations | `holdout_reservations.json` | preregistered eval task IDs consumed once (`odr holdout claim/split`) |
@@ -270,7 +265,6 @@ it; the dream module itself decides maintenance vs full per workspace:
 Type=oneshot
 Environment=ODR_PKG=/opt/odr/share/open-dream-rsi
 Environment=ODR_WS_GLOB=/opt/odr/workspaces/*/odr-mem
-Environment=ODR_SOURCE=cursor
 Environment=ODR_PROVIDER=cursor-agent
 ExecStart=/opt/odr/share/open-dream-rsi/scripts/odr_fleet_dream.sh
 
@@ -282,11 +276,10 @@ WantedBy=timers.target
 ```
 
 What separates a *learning* fleet from a heartbeat-only one is carried by the
-runner's environment — three ingredients:
+runner's environment — two ingredients:
 
 | ingredient | switch | without it |
 |---|---|---|
-| evidence ingest | `ODR_SOURCE=cursor` (or `hermes` + `ODR_SESSIONS_DB`) | sessions are never read; the KB stays empty forever |
 | a real dreamer | `ODR_PROVIDER=cursor-agent` (CLI), or `openai`/`local` + `ODR_ENV_FILE` | full dreams attempt nothing; before 0.3.11 this was invisible |
 | the workspace glob | `ODR_WS_GLOB` (one memory dir per workspace) | — |
 
@@ -296,7 +289,7 @@ fleet reads `wake: n/n` and ~1 API call per workspace per ~6 h in
 `odr metrics`. A fleet stuck at `api_calls: 0` across sweeps is a timer
 running bare dream calls — fix the table above, then diagnose one workspace
 with `odr --memory <dir> metrics` (the `llm errors` classes name the missing
-env). `ODR_INGEST=0` keeps the heartbeat-only behavior explicitly.
+env).
 
 ---
 
@@ -316,10 +309,10 @@ the gate arm is fixed choice-removal, no learned content in those episodes.
 ![goose × TravelPlanner: delivery + failure anatomy](docs/figures/fig_tp.png)
 
 The learned machinery is validated on the scripted suites; live replay also
-showed fresh lessons are hazardous by default (imperative mood, not content:
-18/20 → 6/20, declarative restatement back to 18/20) — which is why the KB
-is staging-by-default behind a paired-replay gate. Full tables, Wilson
-intervals, protocol, self-check contracts and the memory findings:
+showed fresh prompt-injected lessons are hazardous by default (18/20 → 6/20
+with imperative framing, declarative restatement back to 18/20) — the
+finding that led to removing prompt-lesson curation in 0.4.0. Full tables,
+Wilson intervals, protocol and self-check contracts:
 **[docs/benchmarks.md](docs/benchmarks.md)**.
 
 ---
@@ -330,13 +323,13 @@ The repository keeps four planes strictly apart:
 
 | Plane | Owner | Question it answers |
 |---|---|---|
-| **Learning** | Dream-RSI pipeline (dreamer, replay gate, lesson gate) | Does this artifact *deserve* to be active? |
+| **Learning** | Dream-RSI pipeline (dreamer, replay gate) | Does this artifact *deserve* to be active? |
 | **Current artifact state** | `ArtifactLifecycleManager` (`lifecycle.py`) | What is true about this artifact *now*? |
 | **Transition history** | append-only `artifacts/events.jsonl` | How did it get here? |
 | **Immutable evidence** | Discovery Trees + the event logs | Why do these artifacts exist, and what world produced them? |
 
 The ALM manages the four artifact types (`policy_parameters`,
-`policy_program`, `recipe`, `lesson`) through an explicit state machine
+`policy_program`, `recipe`) through an explicit state machine
 (`CANDIDATE → VALIDATED → ACTIVE → STALE/SUPERSEDED/QUARANTINED → ARCHIVED`,
 terminal `REJECTED`), with hard rules: activation is *only* an explicit
 promotion call carrying the evidence; every state change appends exactly
@@ -346,29 +339,10 @@ is rebuilt from the log, never trusted); merges create NEW artifacts with
 lineage and never mutate sources; deletion never prunes the event log.
 Discovery Trees and audit events are **evidence, not artifacts** — the ALM
 refuses to register them. Inspect the store:
-`odr artifacts [--type lesson --state ACTIVE --history]`.
+`odr artifacts [--type policy_program --state ACTIVE --history]`.
 
 ---
 
-## Importing real sessions (curator's second door)
-
-The loop distils lessons from its own failures; it can also import the
-transcripts you already paid for. **Hermes, Cursor and Claude Code** are
-first-class evidence sources, and user corrections are a second evidence
-class. Everything imported is untrusted: read-only, secret-redacted, staged
-behind the same promotion gate — activation is earned.
-
-| Source | One command |
-|---|---|
-| Hermes `state.db` | `odr --memory .dream_rsi dream --source hermes --sessions ~/.hermes/state.db` |
-| Cursor `state.vscdb` | `odr --memory .dream_rsi dream --source cursor` |
-| Claude Code `~/.claude/projects` | `odr --memory .dream_rsi dream --source claude` |
-
-Export-then-distil, corrections classification, backfill of burned sessions,
-git-backed lesson stores, holdout hygiene and the full Hermes wiring:
-**[docs/sessions.md](docs/sessions.md)**.
-
----
 
 ## Security model
 
@@ -470,14 +444,12 @@ on loopback unless the LAN is trusted.
 | `core.dreamer` | offline optimisation over recorded history |
 | `core.agent` | LLM agent driven by the rewarded policy |
 | `core.policygen` | policy generation, AST gate, rollout scoring, promotion |
-| `core.curator` | lesson distillation, headroom verdict, gate verdict |
 | `core.judge` | completion judge for test-less (`criteria`) tasks |
 | `loop` | `AutoRSIRuntime` — the autonomous supervisor (opt-in `sentinel_engine`) |
-| `dream` | `dream_once` — automated cadence seam: evidence ingest, tier decision, gate + ALM, skills publish; lock-guarded |
+| `dream` | `dream_once` — automated cadence seam: tier decision, dream cycle, ALM housekeeping; lock-guarded |
 | `lifecycle` | `ArtifactLifecycleManager` — state machine, event-sourced history, lineage, GC |
-| `sessions` | Hermes `state.db` / Cursor `state.vscdb` readers, redaction, lessons→skills bridge |
-| `share` | git-backed stores: lessons + worlds + policy programs (checksummed manifest, staging-only import) |
-| `memory` | `DreamMemory` — policies, recipes, lessons, trees, events |
+| `share` | git-backed stores: worlds + policy programs (checksummed manifest; imported policies stay local until the replay gate promotes) |
+| `memory` | `DreamMemory` — policies, policy codes, recipes, trees, events |
 | `sandbox` | `run_isolated` — the single untrusted-code execution boundary (+ opt-in content-addressed result cache: `SandboxCache`/`content_key`) |
 | `holdout` | single-use eval-task reservations (`claim / release / show / split`) |
 | `tools` | `CodeVerifier` — sandboxed verification of candidate solutions |
@@ -486,7 +458,7 @@ on loopback unless the LAN is trusted.
 | `mcp`, `mcp_server` | MCP stdio server for loop tools and sentinel checks |
 | `proxy` | loopback OpenAI-compatible proxy borrowing goose's upstream |
 | `dashboard` | zero-dependency live web UI |
-| `gate_replay` | offline validation of the lesson promotion rule |
+| `gate_replay` | offline paired comparison of recorded baseline/arm outcome rows |
 | `evolution` | anytime-valid stopper for policy evolution (betting martingale over promotion outcomes; freezes regeneration, keeps the last promoted policy) |
 | `sentinel` | host-agnostic error-class engine + `SentinelObservation` world contract |
 | `utils.goose` | goose config resolver (CLI + desktop dialects, keychain) |

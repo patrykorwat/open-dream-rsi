@@ -4,7 +4,7 @@ The loop's primary verdict source is the sandboxed :class:`CodeVerifier`
 running explicit ``{call, expected}`` tests. Real-world tasks queued from a
 harness often arrive WITHOUT tests — only a prompt and maybe a success
 criterion. Without a verdict source such tasks can never be marked solved,
-so recipes/lessons never form around them.
+so recipes never form around them.
 
 :class:`LLMJudge` closes that gap under three hard rules:
 

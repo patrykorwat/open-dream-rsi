@@ -85,7 +85,7 @@ class TestLoopWithJudge(unittest.TestCase):
                             memory=DreamMemory(tempfile.mkdtemp()),
                             tasks=[no_test_task()],
                             api_call_budget=budget, enable_judge=enable_judge,
-                            enable_policy_code=False, enable_knowledge=False)
+                            enable_policy_code=False)
         return rt.run_once(), client
 
     def test_judge_solves_test_less_task(self):
@@ -106,7 +106,7 @@ class TestLoopWithJudge(unittest.TestCase):
         import tempfile
         rt = AutoRSIRuntime(client=client, memory=DreamMemory(tempfile.mkdtemp()),
                             tasks=[no_test_task()], api_call_budget=6,
-                            enable_policy_code=False, enable_knowledge=False)
+                            enable_policy_code=False)
         report = rt.run_once()
         self.assertEqual(report.tasks_solved, 0)
         self.assertEqual(client.judge_calls, 0)  # hard sandbox fail, no LLM used
@@ -128,7 +128,7 @@ class TestLoopWithJudge(unittest.TestCase):
         task = no_test_task(tests=[{"call": "is_even(2)", "expected": True}])
         rt = AutoRSIRuntime(client=client, memory=DreamMemory(tempfile.mkdtemp()),
                             tasks=[task], api_call_budget=6,
-                            enable_policy_code=False, enable_knowledge=False)
+                            enable_policy_code=False)
         report = rt.run_once()
         self.assertEqual(report.tasks_solved, 0)
         self.assertEqual(client.judge_calls, 0)

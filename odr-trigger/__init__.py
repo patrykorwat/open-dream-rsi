@@ -9,18 +9,16 @@ Design rules:
   * NO shell scripts, NO flock files, NO cron — the plugin calls
     open_dream_rsi.dream.dream_once() directly, in-process. Single-instance
     locking and cadence (cheap maintenance per call; the full world dreamer
-    only when evidence or staleness justifies it) live in that module, so
+    on the age cadence) live in that module, so
     the same behaviour holds for the MCP tool and the CLI.
   * never blocks the session: fire-and-forget daemon thread.
-  * never decides WHAT or WHETHER a lesson is good — that is the
+  * never decides WHAT or WHETHER a policy is good — that is the
     promotion gate's job. This adapter decides WHEN only.
   * installs by copying this directory alone: if open_dream_rsi is not
     importable it registers nothing and says so once in the log.
 
 Config (plugins.entries.odr-trigger.settings.*):
   memory       ODR memory dir           (default: $HERMES_HOME/dream_rsi)
-  sessions_db  host state.db            (default: $HERMES_HOME/state.db)
-  skills_out   where SKILL.md files go  (default: $HERMES_HOME/skills/odr-curated)
   provider     LLM endpoint preset      (default: local)
   model        model override           (default: env ODR_LLM_MODEL)
   budget       max API calls per FULL dream (default 100)
@@ -53,9 +51,6 @@ def _resolve() -> Dict[str, Any]:
     home = Path(os.environ.get("HERMES_HOME", "/opt/data"))
     return {
         "memory": str(_cfg("memory", home / "dream_rsi")),
-        "sessions_db": str(_cfg("sessions_db", home / "state.db")),
-        "skills_out": str(_cfg("skills_out",
-                               home / "skills" / "odr-curated")),
         "provider": _cfg("provider", "local"),
         "model": _cfg("model_override", os.environ.get("ODR_LLM_MODEL")),
         "base_url": _cfg("base_url",
@@ -85,8 +80,6 @@ def on_session_end(**kw) -> None:
         # --memory is a GLOBAL flag: it must precede the subcommand.
         cmd = [sys.executable, "-m", "open_dream_rsi",
                "--memory", cfg["memory"], "dream",
-               "--sessions", cfg["sessions_db"],
-               "--skills-out", cfg["skills_out"],
                "--provider", cfg["provider"],
                "--budget", str(cfg["budget"])]
         if cfg.get("model"):

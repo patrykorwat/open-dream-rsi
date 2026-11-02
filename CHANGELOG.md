@@ -4,6 +4,29 @@ All notable changes to `open-dream-rsi` are documented here. Versions 0.3.0 and
 earlier are summarized from the commit history; the full log is the source of
 truth.
 
+## [0.4.0] — 2026-11-02
+
+### Removed
+
+- **Knowledge curator / lesson KB.** `core/curator.py`, `sessions.py`,
+  `corrections.py`, the `lesson` artifact type in the ALM, `lessons.json`,
+  `lessons_to_skills`, and the probe-task queue are gone. Paired-replay
+  falsification across nine published prompt-injection arms (zero gains;
+  two measurably harmful) is recorded in docs/benchmarks.md and the paper.
+- MCP tool `odr_lessons`; CLI subcommands `sessions` and `skills`; the
+  `lessons` CLI group is now `store` (worlds/policies only);
+  `gate-replay --lessons`; `dream --sessions/--source/--cursor-user-dir/--skills-out`;
+  fleet env `ODR_SOURCE`, `ODR_INGEST`, `ODR_SKILLS_OUT`, `ODR_CURSOR_USER_DIR`,
+  `ODR_SESSIONS_DB`.
+
+### Changed
+
+- `gate_replay` hosts the promotion-rule math (`gate_verdict`) directly; the
+  lesson-specific stop-clause criterion is gone (the gate rule itself is
+  unchanged: net ≥ 1, zero solve→fail regressions).
+- `dream_once` tiers on age only (evidence ingest removed); the wake
+  self-test is unchanged.
+
 ## [0.3.15] — 2026-10-27
 
 ### Added

@@ -2,8 +2,8 @@ name: odr-trigger
 version: 1.0.0
 description: >-
   Event-driven Dream-RSI trigger. On every session end (on_session_end hook)
-  it fires the ODR improvement cycle — evidence export, lesson distillation,
-  promotion gate, ALM maintenance — instead of waiting for any schedule.
+  it fires the ODR improvement cycle — ALM maintenance + dreaming —
+  instead of waiting for any schedule.
   Overlapping triggers collapse into one run (flock); a throttle keeps
   rapid-fire sessions from stacking cycles.
 author: patrykorwat

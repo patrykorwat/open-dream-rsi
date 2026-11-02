@@ -1,11 +1,11 @@
-"""Offline validation of the lesson promotion gate on recorded arm pairs.
+"""Offline paired-arm comparison on recorded outcome rows.
 
-The gate's decision rule lives in :func:`open_dream_rsi.core.curator.\
-lesson_gate_verdict`; this module applies THAT rule (never a re-implementation)
-to per-task outcome pairs recorded by any replay harness: a baseline arm
-(no lessons) and one or more warm arms (lessons injected), joined on a shared
-task key. It answers the counterfactual question "would the shipped gate have
-promoted or rejected this lesson set?" without touching a model or an API key.
+The decision rule lives in :func:`open_dream_rsi.gate_replay.gate_verdict`;
+this module applies THAT rule (never a re-implementation) to per-task
+outcome pairs recorded by any replay harness: a baseline arm and one or
+more treatment arms, joined on a shared task key. It answers the
+counterfactual question "would the shipped gate have promoted this arm?"
+without touching a model or an API key.
 
 Input format (any replay harness that records per-task rows works):
 
@@ -20,20 +20,54 @@ Typical use::
 
     python -m open_dream_rsi gate-replay \
         --baseline cold.json \
-        --compare lessons=/tmp/warm_v5.json:warm \
+        --compare arm_v5=/tmp/warm_v5.json:warm \
         --compare neutral=/tmp/warm_v6.json:neutral \
-        --key krs --lessons lessons.json --format md
+        --key krs --format md
 """
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .core.curator import GateVerdict, has_stop_clause, lesson_gate_verdict
 
 __all__ = ["filter_rows", "load_arm_rows", "arm_pairs", "gate_replay",
-           "to_markdown"]
+           "gate_verdict", "GateVerdict", "to_markdown"]
+
+
+GATE_MIN_NET = 1
+
+
+@dataclass
+class GateVerdict:
+    promoted: List[str]
+    rejected: List[str]
+    detail: Dict[str, Any]
+
+
+def gate_verdict(results: Dict[str, List[Tuple[bool, bool]]]) -> GateVerdict:
+    """Decide promotion from paired replay outcomes.
+
+    ``results`` maps arm key -> list of (solved_treatment, solved_baseline)
+    trial pairs. Promotion rule (sign test, harm-asymmetric):
+
+    * net = #(fail->solve) - #(solve->fail) >= GATE_MIN_NET, and
+    * zero solve->fail regressions.
+    """
+    promoted: List[str] = []
+    rejected: List[str] = []
+    detail: Dict[str, Any] = {}
+    for key, pairs in results.items():
+        gains = sum(1 for w, wo in pairs if w and not wo)
+        regs = sum(1 for w, wo in pairs if wo and not w)
+        net = gains - regs
+        ok = net >= GATE_MIN_NET and regs == 0
+        detail[key] = {"gains": gains, "regressions": regs, "net": net,
+                       "promoted": ok}
+        (promoted if ok else rejected).append(key)
+    return GateVerdict(promoted, rejected, detail)
+
 
 
 def filter_rows(rows: List[Dict[str, Any]],
@@ -95,8 +129,8 @@ def arm_pairs(baseline_rows: List[Dict[str, Any]],
               ) -> Tuple[List[Tuple[bool, bool]], Dict[str, int]]:
     """Join an arm to the baseline on ``key`` and emit (with, without) pairs.
 
-    Pair order matches ``lesson_gate_verdict``: ``(solved_with_lessons,
-    solved_without_lessons)``. Rows whose key is missing or duplicated, or
+    Pair order matches ``gate_verdict``: ``(solved_with_treatment,
+    solved_without_treatment)``. Rows whose key is missing or duplicated, or
     absent from the other arm, are skipped and counted in the stats dict.
     """
     def index(rows: List[Dict[str, Any]]) -> Tuple[Dict[str, bool], int]:
@@ -130,30 +164,24 @@ def gate_replay(baseline_rows: List[Dict[str, Any]],
                 arms: Dict[str, List[Dict[str, Any]]],
                 key: str = "task_id",
                 solved_field: str = "solved",
-                lesson_texts: Optional[List[str]] = None,
-                ) -> Dict[str, Any]:
+                            ) -> Dict[str, Any]:
     """Replay the shipped gate's rule over recorded baseline/arm outcome pairs.
 
     ``baseline_rows``/arm rows should already be filtered to one arm
     (see :func:`filter_rows`). Returns a report dict: per-arm pair stats, the
-    ``lesson_gate_verdict`` detail (the ACTUAL promotion rule, harm-asymmetric
-    sign test) and, when ``lesson_texts`` are given, the stop-clause
-    precondition per lesson text.
+    ``gate_verdict`` detail (the ACTUAL promotion rule, harm-asymmetric
+    sign test).
     """
     result: Dict[str, Any] = {"key": key, "arms": {}}
     for name, rows in arms.items():
         pairs, stats = arm_pairs(baseline_rows, rows, key=key,
                                  solved_field=solved_field)
-        verdict: GateVerdict = lesson_gate_verdict({name: pairs})
+        verdict: GateVerdict = gate_verdict({name: pairs})
         detail = dict(verdict.detail[name])
         detail["promoted"] = name in verdict.promoted
         detail.update(stats)
         detail["pairs"] = pairs
         result["arms"][name] = detail
-    if lesson_texts is not None:
-        result["stop_clauses"] = [
-            {"text": t[:80], "has_stop_clause": has_stop_clause(t)}
-            for t in lesson_texts]
     return result
 
 
@@ -165,7 +193,4 @@ def to_markdown(report: Dict[str, Any]) -> str:
         verdict = "PROMOTE" if d["promoted"] else "REJECT"
         lines.append(f"| {name} | {d['joined']} | {d['gains']} | "
                      f"{d['regressions']} | {d['net']:+d} | {verdict} |")
-    for sc in report.get("stop_clauses", []):
-        mark = "yes" if sc["has_stop_clause"] else "NO"
-        lines.append(f"\nstop clause [{mark}]: {sc['text']}…")
     return "\n".join(lines)

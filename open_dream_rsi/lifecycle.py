@@ -26,7 +26,7 @@ new state. An invalid transition is never committed.
 
 Lifecycle-managed artifacts vs immutable evidence
 -------------------------------------------------
-``policy_parameters``, ``policy_program``, ``recipe``, ``lesson`` are
+``policy_parameters``, ``policy_program``, ``recipe`` are
 runtime-usable artifacts with a lifecycle. ``discovery_tree`` and
 ``audit_event`` are **evidence**: replayable history that the ALM must never
 activate, supersede, merge or rewrite — registering them is rejected by
@@ -55,7 +55,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # -- vocabulary -------------------------------------------------------------
 
 #: Artifact types that carry a lifecycle (runtime-usable objects).
-ARTIFACT_TYPES = ("policy_parameters", "policy_program", "recipe", "lesson")
+ARTIFACT_TYPES = ("policy_parameters", "policy_program", "recipe")
 
 #: Immutable evidence — retention/archival/integrity only, NEVER lifecycle
 #: transitions (issue #3: "Discovery Trees must remain replayable historical
@@ -96,8 +96,8 @@ ALLOWED_TRANSITIONS: Dict[Tuple[str, str], str] = {
 }
 
 #: Types where at most ONE artifact may be ACTIVE per logical slot at a time
-#: ("Normally only one active version per logical policy"). Lessons and
-#: recipes legitimately have several active entries per category.
+#: ("Normally only one active version per logical policy"). Recipes
+#: legitimately have several active entries per category.
 SINGLE_ACTIVE_TYPES = ("policy_parameters", "policy_program")
 
 #: Automatic lifecycle actions skip these states (terminal or pending).
@@ -220,19 +220,6 @@ def _err_list() -> List[str]:
     return []
 
 
-def _validate_lesson_payload(payload: Dict[str, Any]) -> List[str]:
-    """Structural lesson check (schema/length). Structural validity does NOT
-    imply behavioral usefulness — activation still needs promotion evidence."""
-    errors: List[str] = []
-    from open_dream_rsi.core.curator import validate_lesson_items
-    item = {"trigger": payload.get("trigger", ""), "text": payload.get("text", "")}
-    try:
-        validate_lesson_items([item], max_lessons=1)
-    except Exception as exc:
-        errors.append(f"lesson: {exc}")
-    return errors
-
-
 def _validate_policy_program_payload(payload: Dict[str, Any]) -> List[str]:
     """Policy programs must pass syntax/AST validation before VALIDATED."""
     errors: List[str] = []
@@ -271,7 +258,6 @@ def _validate_recipe_payload(payload: Dict[str, Any]) -> List[str]:
 
 
 VALIDATORS: Dict[str, Callable[[Dict[str, Any]], List[str]]] = {
-    "lesson": _validate_lesson_payload,
     "policy_program": _validate_policy_program_payload,
     "policy_parameters": _validate_policy_parameters_payload,
     "recipe": _validate_recipe_payload,
@@ -626,9 +612,9 @@ class ArtifactLifecycleManager:
     def annotate(self, artifact_id: str, payload: Dict[str, Any], *,
                  reason: str, actor: str) -> ArtifactState:
         """Refresh the payload of a NON-CANDIDATE artifact without changing
-        its lifecycle state (evidence merge on an existing lesson). A new
+        its lifecycle state (evidence merge on an existing artifact). A new
         artifact VERSION is still created via register_candidate/merge; this
-        is only the evidence-annotation channel the curator needs, recorded
+        is only the evidence-annotation channel, recorded
         as its own event so reconstruction stays exact."""
         st = self.get_state(artifact_id)
         new_payload = dict(payload)
@@ -642,7 +628,7 @@ class ArtifactLifecycleManager:
 
     def retire(self, artifact_id: str, *, reason: str,
                actor: str) -> ArtifactState:
-        """Take a lesson out of the runtime-active view through the state
+        """Take an artifact out of the runtime-active view through the state
         machine — ACTIVE -> STALE -> ARCHIVED, VALIDATED -> REJECTED. The
         record itself remains addressable and auditable (never deleted)."""
         st = self.get_state(artifact_id)
@@ -965,24 +951,6 @@ def _apply_payload(t: ArtifactState, payload: Dict[str, Any]) -> None:
 
 # -- merge combiners (semantic proposals live upstream; these are defaults)
 
-def _merge_lesson(sources: List[ArtifactState]) -> Dict[str, Any]:
-    from open_dream_rsi.core.curator import normalize
-    texts = [str(s.payload.get("text", "")) for s in sources if s.payload.get("text")]
-    words: List[str] = []
-    for s in sources:
-        for w in normalize(str(s.payload.get("trigger", ""))).split():
-            if w not in words:
-                words.append(w)
-    evidence: List[str] = []
-    for s in sources:
-        for e in (s.payload.get("evidence") or []):
-            if e not in evidence:
-                evidence.append(e)
-    return {"trigger": " ".join(words[:4]),
-            "text": " / ".join(dict.fromkeys(texts)),
-            "evidence": evidence}
-
-
 def _merge_recipe(sources: List[ArtifactState]) -> Dict[str, Any]:
     best = max(sources, key=lambda s: float(s.payload.get("score", 0.0)))
     payload = dict(best.payload)
@@ -990,7 +958,7 @@ def _merge_recipe(sources: List[ArtifactState]) -> Dict[str, Any]:
     return payload
 
 
-_default_combiners = {"lesson": _merge_lesson, "recipe": _merge_recipe}
+_default_combiners = {"recipe": _merge_recipe}
 
 
 # -- reconstruction: the event stream is the source of truth -------------------

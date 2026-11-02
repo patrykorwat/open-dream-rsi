@@ -38,7 +38,7 @@ HOOKS = [
 RULE_NAME = "odr-no-mcp.mdc"
 
 RULE_TEMPLATE = """---
-description: open-dream-rsi without MCP — queue tasks and surface learned lessons
+description: open-dream-rsi without MCP — queue tasks and inspect learned state
 alwaysApply: false
 ---
 
