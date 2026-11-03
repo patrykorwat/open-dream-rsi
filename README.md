@@ -26,7 +26,7 @@ beats the incumbent. An open implementation of *Recursive Self-Improvement
 through Evolving Worlds* (Dream-RSI, Zheng et al.,
 [arXiv:2609.14858](https://arxiv.org/abs/2609.14858)).
 
-**Zero runtime dependencies** — Python 3.10+ stdlib only, ~11.2k lines of
+**Zero runtime dependencies** — Python 3.10+ stdlib only, ~8.6k lines of
 library code, ~4.4k lines of tests, no build step.
 
 **Not another memory plugin.** Experience-memory systems record what the
