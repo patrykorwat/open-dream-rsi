@@ -4,6 +4,13 @@ All notable changes to `open-dream-rsi` are documented here. Versions 0.3.0 and
 earlier are summarized from the commit history; the full log is the source of
 truth.
 
+## [0.4.7] — 2026-11-02
+
+### Fixed
+
+- README: the library LOC claim matched 0.3.x (~10.2k) — updated to the
+  current tree (~8.6k, non-blank; consistent with the paper).
+
 ## [0.4.6] — 2026-11-02
 
 ### Fixed
